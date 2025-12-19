@@ -25,7 +25,7 @@ var client *whatsmeow.Client
 var container *sqlstore.Container
 
 func main() {
-	fmt.Println("🚀 [Impossible Bot] Starting Targeted Engine...")
+	fmt.Println("🚀 [Impossible Bot] Initializing Final Stable Engine...")
 
 	dbURL := os.Getenv("DATABASE_URL")
 	dbType := "postgres"
@@ -42,6 +42,7 @@ func main() {
 	deviceStore, err := container.GetFirstDevice(context.Background())
 	if err != nil { panic(err) }
 
+	// کلائنٹ بنانا
 	client = whatsmeow.NewClient(deviceStore, waLog.Stdout("Client", "INFO", true))
 	client.AddEventHandler(eventHandler)
 
@@ -56,65 +57,52 @@ func main() {
 	r.POST("/api/pair", func(c *gin.Context) {
 		var req struct{ Number string `json:"number"` }
 		if err := c.BindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"error": "Invalid Input"})
+			c.JSON(400, gin.H{"error": "Invalid input"})
 			return
 		}
 
-		// نمبر سے فالتو نشانات ختم کرنا
-		cleanReqNum := strings.ReplaceAll(req.Number, "+", "")
-		fmt.Printf("🔍 [Filter] Searching for existing sessions of: %s\n", cleanReqNum)
+		cleanNum := strings.ReplaceAll(req.Number, "+", "")
+		fmt.Printf("🧹 [Security] Cleaning old sessions for: %s\n", cleanNum)
 
-		if client.IsConnected() {
-			client.Disconnect()
-		}
-
-		// --- مخصوص نمبر کی کلیننگ لاجک ---
+		// سیشن کلین اپ لاجک
 		devices, _ := container.GetAllDevices(context.Background())
-		foundOld := false
 		for _, dev := range devices {
-			// اگر ڈیوائس کا نمبر (JID) ہمارے مطلوبہ نمبر سے میچ کرے
-			if dev.ID != nil && strings.Contains(dev.ID.User, cleanReqNum) {
-				fmt.Printf("🗑️ [Cleanup] Found and deleting specific session for: %s\n", dev.ID.User)
+			if dev.ID != nil && strings.Contains(dev.ID.User, cleanNum) {
 				container.DeleteDevice(context.Background(), dev)
-				foundOld = true
+				fmt.Printf("🗑️ [Cleanup] Deleted existing session for %s\n", cleanNum)
 			}
 		}
 
-		if !foundOld {
-			fmt.Println("✅ [Database] No existing session found for this number. Safe to proceed.")
-		}
+		// فکسڈ: NewDevice اب بغیر کسی آرگیومنٹ کے کال ہو رہا ہے
+		newDevice := container.NewDevice() 
+		
+		// فکسڈ: SetDevice کی جگہ نیا کلائنٹ انسٹنس بنانا
+		if client.IsConnected() { client.Disconnect() }
+		client = whatsmeow.NewClient(newDevice, waLog.Stdout("Client", "INFO", true))
+		client.AddEventHandler(eventHandler)
 
-		// نیا فریش ڈیوائس اسٹور بنانا
-		newDevice := container.NewDevice(context.Background())
-		client.SetDevice(newDevice)
-
-		fmt.Println("🌐 [Network] Opening fresh socket...")
 		err = client.Connect()
 		if err != nil {
-			c.JSON(500, gin.H{"error": "WhatsApp connection failed. Try again."})
+			c.JSON(500, gin.H{"error": "Connection failed"})
 			return
 		}
 
-		// سرور کو مستحکم ہونے کے لیے وقت دیں
+		// واٹس ایپ نیٹ ورک کے مستحکم ہونے کا انتظار
 		time.Sleep(10 * time.Second)
 
-		fmt.Println("🔑 [Auth] Querying pairing code for fresh session...")
-		code, err := client.PairPhone(context.Background(), cleanReqNum, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+		fmt.Println("🔑 [Auth] Generating pairing code...")
+		code, err := client.PairPhone(context.Background(), cleanNum, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 		
 		if err != nil {
-			fmt.Printf("❌ [Server Error] %v\n", err)
-			c.JSON(500, gin.H{"error": "WhatsApp server busy. Refresh and try again."})
+			fmt.Printf("❌ [Error] %v\n", err)
+			c.JSON(500, gin.H{"error": "WhatsApp server timeout. Try again."})
 			return
 		}
 
-		fmt.Printf("✅ [Success] Generated Code: %s\n", code)
 		c.JSON(200, gin.H{"code": code})
 	})
 
-	go func() {
-		fmt.Printf("🌐 [Web] Interface active on port %s\n", port)
-		r.Run(":" + port)
-	}()
+	go r.Run(":" + port)
 
 	if client.Store.ID != nil {
 		client.Connect()
@@ -139,13 +127,13 @@ func eventHandler(evt interface{}) {
 
 func sendOfficialMenu(chat types.JID) {
 	listMsg := &waProto.ListMessage{
-		Title:       proto.String("IMPOSSIBLE BOT"),
-		Description: proto.String("Advanced Menu System"),
+		Title:       proto.String("IMPOSSIBLE MENU"),
+		Description: proto.String("Advanced Go System"),
 		ButtonText:  proto.String("MENU"),
 		ListType:    waProto.ListMessage_SINGLE_SELECT.Enum(),
 		Sections: []*waProto.ListMessage_Section{
 			{
-				Title: proto.String("TOOLS"),
+				Title: proto.String("COMMANDS"),
 				Rows: []*waProto.ListMessage_Row{
 					{Title: proto.String("Ping"), RowID: proto.String("ping")},
 				},
