@@ -203,12 +203,3 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"success":true,"message":"Session deleted"}`)
 }
-
-// Dummy functions - add your actual implementation
-func handler(c *whatsmeow.Client, evt interface{}) {
-	// Add your event handler logic here
-}
-
-func loadDataFromMongo() {
-	// Add your MongoDB data loading logic here
-}
