@@ -37,13 +37,13 @@ var (
 	mongoClient *mongo.Client
 	mongoColl   *mongo.Collection
 	
-	// WebSocket (FIXED: Allow All Origins)
+	// WebSocket
 	wsupgrader = websocket.Upgrader{
 		ReadBufferSize:   1024,
 		WriteBufferSize:  1024,
 		HandshakeTimeout: 10 * time.Second,
 		CheckOrigin: func(r *http.Request) bool {
-			return true // Fixes 400 Bad Request on Railway
+			return true
 		},
 	}
 	clients = make(map[*websocket.Conn]bool)
@@ -174,13 +174,14 @@ func handlePairing(c *gin.Context) {
 	num := strings.ReplaceAll(req.Number, " ", "")
 	num = strings.ReplaceAll(num, "+", "")
 
-	// 1. Check if session exists & Delete it (Logic added)
+	// 1. Check if session exists & Delete it (FIXED: Added context)
 	existingDevices, err := container.GetAllDevices(context.Background())
 	if err == nil {
 		for _, d := range existingDevices {
 			if d.ID != nil && d.ID.User == num {
 				fmt.Printf("♻️ Deleting old session for: %s\n", num)
-				container.DeleteDevice(d)
+				// FIXED LINE BELOW
+				container.DeleteDevice(context.Background(), d)
 			}
 		}
 	}
