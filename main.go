@@ -21,6 +21,9 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
+
+	"go.mau.fi/whatsmeow/binary/proto" // ✅ Add this import
+	waProto "go.mau.fi/whatsmeow/binary/proto" // ✅ waProto alias
 )
 
 const (
@@ -128,7 +131,7 @@ func eventHandler(evt interface{}) {
 	}
 }
 
-func getText(msg *whatsmeow.ProtoMessage) string {
+func getText(msg *waProto.Message) string { // ✅ fixed type
 	if msg == nil {
 		return ""
 	}
@@ -145,26 +148,26 @@ func getText(msg *whatsmeow.ProtoMessage) string {
 
 func sendMenu(chat types.JID) {
 	menu := &waProto.ListMessage{
-        Title:       proto.String("IMPOSSIBLE MENU"),
-        Description: proto.String("Select an option"),
-        ButtonText:  proto.String("Open Menu"),
-        ListType:    waProto.ListMessage_SINGLE_SELECT.Enum(),
-        Sections: []*waProto.ListMessage_Section{
-            {
-                Title: proto.String("COMMANDS"),
-                Rows: []*waProto.ListMessage_Row{
-                    {
-                        RowID: proto.String("ping"),
-                        Title: proto.String("Ping"),
-                    },
-                },
-            },
-        },
-    }
+		Title:       proto.String("IMPOSSIBLE MENU"),
+		Description: proto.String("Select an option"),
+		ButtonText:  proto.String("Open Menu"),
+		ListType:    waProto.ListMessage_SINGLE_SELECT.Enum(),
+		Sections: []*waProto.ListMessage_Section{
+			{
+				Title: proto.String("COMMANDS"),
+				Rows: []*waProto.ListMessage_Row{
+					{
+						RowID: proto.String("ping"),
+						Title: proto.String("Ping"),
+					},
+				},
+			},
+		},
+	}
 
-    client.SendMessage(context.Background(), chat, &waProto.Message{
-        ListMessage: menu,
-    })
+	client.SendMessage(context.Background(), chat, &waProto.Message{
+		ListMessage: menu,
+	})
 }
 
 // ================= PING =================
@@ -190,7 +193,7 @@ func sendPing(chat types.JID) {
 		uptime,
 	)
 
-	client.SendMessage(context.Background(), chat, &whatsmeow.ProtoMessage{
+	client.SendMessage(context.Background(), chat, &waProto.Message{
 		Conversation: &msg,
 	})
 }
