@@ -4,420 +4,438 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	waProto "go.mau.fi/whatsmeow/binary/proto"
 )
 
-// ==================== سیٹنگز سسٹم ====================
-func toggleAlwaysOnline(client *whatsmeow.Client, v *events.Message) {
-	if !isOwner(client, v.Info.Sender) {
-		msg := `╔════════════════╗
-║ ❌ ACCESS DENIED
-╠════════════════╣
-║ 🔒 Owner Only
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	status := "OFF 🔴"
-	statusText := "Disabled"
-	dataMutex.Lock()
-	data.AlwaysOnline = !data.AlwaysOnline
-	if data.AlwaysOnline {
-		client.SendPresence(context.Background(), types.PresenceAvailable)
-		status = "ON 🟢"
-		statusText = "Enabled"
-	} else {
-		client.SendPresence(context.Background(), types.PresenceUnavailable)
-	}
-	dataMutex.Unlock()
-
-	msg := fmt.Sprintf(`╔════════════════╗
-║ ⚙️ ALWAYS ONLINE
-╠════════════════╣
-║ 📊 Status: %s
-║ 🔄 State: %s
-║ ✅ Updated
-╚════════════════╝`, status, statusText)
-
-	replyMessage(client, v, msg)
-}
-
-func toggleAutoRead(client *whatsmeow.Client, v *events.Message) {
-	if !isOwner(client, v.Info.Sender) {
-		msg := `╔════════════════╗
-║ ❌ ACCESS DENIED
-╠════════════════╣
-║ 🔒 Owner Only
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	status := "OFF 🔴"
-	statusText := "Disabled"
-	dataMutex.Lock()
-	data.AutoRead = !data.AutoRead
-	if data.AutoRead {
-		status = "ON 🟢"
-		statusText = "Enabled"
-	}
-	dataMutex.Unlock()
-
-	msg := fmt.Sprintf(`╔════════════════╗
-║ ⚙️ AUTO READ
-╠════════════════╣
-║ 📊 Status: %s
-║ 🔄 State: %s
-║ ✅ Updated
-╚════════════════╝`, status, statusText)
-
-	replyMessage(client, v, msg)
-}
-
-func toggleAutoReact(client *whatsmeow.Client, v *events.Message) {
-	if !isOwner(client, v.Info.Sender) {
-		msg := `╔════════════════╗
-║ ❌ ACCESS DENIED
-╠════════════════╣
-║ 🔒 Owner Only
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	status := "OFF 🔴"
-	statusText := "Disabled"
-	dataMutex.Lock()
-	data.AutoReact = !data.AutoReact
-	if data.AutoReact {
-		status = "ON 🟢"
-		statusText = "Enabled"
-	}
-	dataMutex.Unlock()
-
-	msg := fmt.Sprintf(`╔════════════════╗
-║ ⚙️ AUTO REACT
-╠════════════════╣
-║ 📊 Status: %s
-║ 🔄 State: %s
-║ ✅ Updated
-╚════════════════╝`, status, statusText)
-
-	replyMessage(client, v, msg)
-}
-
-func toggleAutoStatus(client *whatsmeow.Client, v *events.Message) {
-	if !isOwner(client, v.Info.Sender) {
-		msg := `╔════════════════╗
-║ ❌ ACCESS DENIED
-╠════════════════╣
-║ 🔒 Owner Only
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	status := "OFF 🔴"
-	statusText := "Disabled"
-	dataMutex.Lock()
-	data.AutoStatus = !data.AutoStatus
-	if data.AutoStatus {
-		status = "ON 🟢"
-		statusText = "Enabled"
-	}
-	dataMutex.Unlock()
-
-	msg := fmt.Sprintf(`╔════════════════╗
-║ ⚙️ AUTO STATUS
-╠════════════════╣
-║ 📊 Status: %s
-║ 🔄 State: %s
-║ ✅ Updated
-╚════════════════╝`, status, statusText)
-
-	replyMessage(client, v, msg)
-}
-
-func toggleStatusReact(client *whatsmeow.Client, v *events.Message) {
-	if !isOwner(client, v.Info.Sender) {
-		msg := `╔════════════════╗
-║ ❌ ACCESS DENIED
-╠════════════════╣
-║ 🔒 Owner Only
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	status := "OFF 🔴"
-	statusText := "Disabled"
-	dataMutex.Lock()
-	data.StatusReact = !data.StatusReact
-	if data.StatusReact {
-		status = "ON 🟢"
-		statusText = "Enabled"
-	}
-	dataMutex.Unlock()
-
-	msg := fmt.Sprintf(`╔════════════════╗
-║ ⚙️ STATUS REACT
-╠════════════════╣
-║ 📊 Status: %s
-║ 🔄 State: %s
-║ ✅ Updated
-╚════════════════╝`, status, statusText)
-
-	replyMessage(client, v, msg)
-}
-
-func handleAddStatus(client *whatsmeow.Client, v *events.Message, args []string) {
-	if !isOwner(client, v.Info.Sender) {
-		msg := `╔════════════════╗
-║ ❌ ACCESS DENIED
-╠════════════════╣
-║ 🔒 Owner Only
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	if len(args) < 1 {
-		msg := `╔════════════════╗
-║ ⚠️ INVALID FORMAT
-╠════════════════╣
-║ 📝 .addstatus <num>
-║ 💡 .addstatus 923xx
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	num := args[0]
-	dataMutex.Lock()
-	data.StatusTargets = append(data.StatusTargets, num)
-	dataMutex.Unlock()
-
-	msg := fmt.Sprintf(`╔════════════════╗
-║ ✅ TARGET ADDED
-╠════════════════╣
-║ 📱 %s
-║ 📊 Total: %d
-╚════════════════╝`, num, len(data.StatusTargets))
-
-	replyMessage(client, v, msg)
-}
-
-func handleDelStatus(client *whatsmeow.Client, v *events.Message, args []string) {
-	if !isOwner(client, v.Info.Sender) {
-		msg := `╔════════════════╗
-║ ❌ ACCESS DENIED
-╠════════════════╣
-║ 🔒 Owner Only
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	if len(args) < 1 {
-		msg := `╔════════════════╗
-║ ⚠️ INVALID FORMAT
-╠════════════════╣
-║ 📝 .delstatus <num>
-║ 💡 .delstatus 923xx
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	num := args[0]
-	dataMutex.Lock()
-	newList := []string{}
-	found := false
-	for _, n := range data.StatusTargets {
-		if n != num {
-			newList = append(newList, n)
-		} else {
-			found = true
-		}
-	}
-	data.StatusTargets = newList
-	dataMutex.Unlock()
-
-	if found {
-		msg := fmt.Sprintf(`╔════════════════╗
-║ ✅ TARGET REMOVED
-╠════════════════╣
-║ 📱 %s
-║ 📊 Remaining: %d
-╚════════════════╝`, num, len(data.StatusTargets))
-		replyMessage(client, v, msg)
-	} else {
-		msg := `╔════════════════╗
-║ ❌ NOT FOUND
-╠════════════════╣
-║ Number not in list
-╚════════════════╝`
-		replyMessage(client, v, msg)
-	}
-}
-
-func handleListStatus(client *whatsmeow.Client, v *events.Message) {
-	if !isOwner(client, v.Info.Sender) {
-		return
-	}
-
-	dataMutex.RLock()
-	targets := data.StatusTargets
-	dataMutex.RUnlock()
-
-	if len(targets) == 0 {
-		msg := `╔════════════════╗
-║ 📭 NO TARGETS
-╠════════════════╣
-║ Use .addstatus
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	msg := "╔════════════════╗\n"
-	msg += "║ 📜 STATUS TARGETS\n"
-	msg += "╠════════════════╣\n"
-	for i, t := range targets {
-		msg += fmt.Sprintf("║ %d. %s\n", i+1, t)
-	}
-	msg += fmt.Sprintf("║ 📊 Total: %d\n", len(targets))
-	msg += "╚════════════════╝"
-
-	replyMessage(client, v, msg)
-}
-
-func handleSetPrefix(client *whatsmeow.Client, v *events.Message, args []string) {
-	if !isOwner(client, v.Info.Sender) {
-		msg := `╔════════════════╗
-║ ❌ ACCESS DENIED
-╠════════════════╣
-║ 🔒 Owner Only
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	if len(args) < 1 {
-		msg := `╔════════════════╗
-║ ⚠️ INVALID FORMAT
-╠════════════════╣
-║ 📝 .setprefix <sym>
-║ 💡 .setprefix .
-║ 💡 .setprefix !
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	newPrefix := args[0]
-	dataMutex.Lock()
-	data.Prefix = newPrefix
-	dataMutex.Unlock()
-
-	msg := fmt.Sprintf(`╔════════════════╗
-║ ✅ PREFIX UPDATED
-╠════════════════╣
-║ 🔧 New: %s
-║ 💡 Ex: %smenu
-╚════════════════╝`, newPrefix, newPrefix)
-
-	replyMessage(client, v, msg)
-}
-
-func handleMode(client *whatsmeow.Client, v *events.Message, args []string) {
+func checkSecurity(client *whatsmeow.Client, v *events.Message) {
 	if !v.Info.IsGroup {
-		msg := `╔════════════════╗
-║ ❌ GROUP ONLY
-╠════════════════╣
-║ Works in groups
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	if !isAdmin(client, v.Info.Chat, v.Info.Sender) && !isOwner(client, v.Info.Sender) {
-		msg := `╔════════════════╗
-║ ❌ ACCESS DENIED
-╠════════════════╣
-║ 🔒 Admin Only
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	if len(args) < 1 {
-		msg := `╔════════════════╗
-║ ⚙️ GROUP MODE
-╠════════════════╣
-║ 1️⃣ public - All
-║ 2️⃣ private - Off
-║ 3️⃣ admin - Admin
-║ 📝 .mode <type>
-╚════════════════╝`
-		replyMessage(client, v, msg)
-		return
-	}
-
-	mode := strings.ToLower(args[0])
-	if mode != "public" && mode != "private" && mode != "admin" {
-		msg := `╔════════════════╗
-║ ❌ INVALID MODE
-╠════════════════╣
-║ Use: public/
-║ private/admin
-╚════════════════╝`
-		replyMessage(client, v, msg)
 		return
 	}
 
 	s := getGroupSettings(v.Info.Chat.String())
-	s.Mode = mode
-	saveGroupSettings(s)
+	if s.Mode == "private" {
+		return
+	}
 
-	var modeDesc string
-	switch mode {
-	case "public":
-		modeDesc = "Everyone"
-	case "private":
-		modeDesc = "Disabled"
-	case "admin":
-		modeDesc = "Admin only"
+	if s.AntilinkAdmin && isAdmin(client, v.Info.Chat, v.Info.Sender) {
+		return
+	}
+
+	if s.Antilink && containsLink(getText(v.Message)) {
+		takeSecurityAction(client, v, s, s.AntilinkAction, "Link detected")
+		return
+	}
+
+	if s.AntiPic && v.Message.ImageMessage != nil {
+		takeSecurityAction(client, v, s, "delete", "Image not allowed")
+		return
+	}
+
+	if s.AntiVideo && v.Message.VideoMessage != nil {
+		takeSecurityAction(client, v, s, "delete", "Video not allowed")
+		return
+	}
+
+	if s.AntiSticker && v.Message.StickerMessage != nil {
+		takeSecurityAction(client, v, s, "delete", "Sticker not allowed")
+		return
+	}
+}
+
+func containsLink(text string) bool {
+	if text == "" {
+		return false
+	}
+
+	text = strings.ToLower(text)
+	linkPatterns := []string{
+		"http://", "https://", "www.",
+		"chat.whatsapp.com/", "t.me/", "youtube.com/",
+		"youtu.be/", "instagram.com/", "fb.com/",
+		"facebook.com/", "twitter.com/", "x.com/",
+	}
+
+	for _, pattern := range linkPatterns {
+		if strings.Contains(text, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func takeSecurityAction(client *whatsmeow.Client, v *events.Message, s *GroupSettings, action, reason string) {
+	switch action {
+	case "delete":
+		_, err := client.RevokeMessage(context.Background(), v.Info.Chat, v.Info.ID)
+		if err != nil {
+			msg := `╔════════════════╗
+║ ❌ ACTION FAILED
+╠════════════════
+║ ⚠️ Bot needs
+║ admin rights
+╚════════════════`
+			replyMessage(client, v, msg)
+			return
+		}
+
+		msg := fmt.Sprintf(`╔════════════════╗
+║ 🚫 MSG DELETED
+╠════════════════
+║ ⚠️ Reason: %s
+║ 👤 User: @%s
+╚════════════════`, reason, v.Info.Sender.User)
+		
+		client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
+			ExtendedTextMessage: &waProto.ExtendedTextMessage{
+				Text: &msg,
+				ContextInfo: &waProto.ContextInfo{
+					MentionedJID: []string{v.Info.Sender.String()},
+				},
+			},
+		})
+
+	case "deletekick":
+		_, err := client.RevokeMessage(context.Background(), v.Info.Chat, v.Info.ID)
+		if err != nil {
+			msg := `╔════════════════╗
+║ ❌ ACTION FAILED
+╠════════════════
+║ Bot needs admin
+╚════════════════`
+			replyMessage(client, v, msg)
+			return
+		}
+
+		_, err = client.UpdateGroupParticipants(context.Background(), v.Info.Chat,
+			[]types.JID{v.Info.Sender}, whatsmeow.ParticipantChangeRemove)
+		
+		if err != nil {
+			msg := `╔════════════════╗
+║ ⚠️ KICK FAILED
+╠════════════════
+║ Bot needs admin
+╚════════════════`
+			replyMessage(client, v, msg)
+			return
+		}
+		
+		msg := fmt.Sprintf(`╔════════════════╗
+║ 👢 USER KICKED
+╠════════════════
+║ ⚠️ Reason: %s
+║ 👤 User: @%s
+║ 🗑️ Delete+Kick
+╚════════════════`, reason, v.Info.Sender.User)
+		
+		client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
+			ExtendedTextMessage: &waProto.ExtendedTextMessage{
+				Text: &msg,
+				ContextInfo: &waProto.ContextInfo{
+					MentionedJID: []string{v.Info.Sender.String()},
+				},
+			},
+		})
+
+	case "deletewarn":
+		senderKey := v.Info.Sender.String()
+		s.Warnings[senderKey]++
+		warnCount := s.Warnings[senderKey]
+
+		_, err := client.RevokeMessage(context.Background(), v.Info.Chat, v.Info.ID)
+		if err != nil {
+			msg := `╔════════════════╗
+║ ❌ ACTION FAILED
+╠════════════════
+║ Bot needs admin
+╚════════════════`
+			replyMessage(client, v, msg)
+			return
+		}
+
+		if warnCount >= 3 {
+			_, err := client.UpdateGroupParticipants(context.Background(), v.Info.Chat,
+				[]types.JID{v.Info.Sender}, whatsmeow.ParticipantChangeRemove)
+			
+			if err != nil {
+				msg := `╔════════════════╗
+║ ⚠️ KICK FAILED
+╠════════════════
+║ Bot needs admin
+╚════════════════`
+				replyMessage(client, v, msg)
+				return
+			}
+
+			delete(s.Warnings, senderKey)
+			
+			msg := fmt.Sprintf(`╔════════════════╗
+║ 🚫 USER KICKED
+╠════════════════
+║ 👤 User: @%s
+║ ⚠️ Final: 3/3
+║ 🔨 Kicked Out
+╚════════════════`, v.Info.Sender.User)
+			
+			client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
+				ExtendedTextMessage: &waProto.ExtendedTextMessage{
+					Text: &msg,
+					ContextInfo: &waProto.ContextInfo{
+						MentionedJID: []string{v.Info.Sender.String()},
+					},
+				},
+			})
+		} else {
+			msg := fmt.Sprintf(`╔════════════════╗
+║ ⚠️ WARNING
+╠════════════════
+║ 👤 User: @%s
+║ 📊 Count: %d/3
+║ 🚨 Reason: %s
+║ ⚠️ 3 = Kick
+╚════════════════`, v.Info.Sender.User, warnCount, reason)
+			
+			client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
+				ExtendedTextMessage: &waProto.ExtendedTextMessage{
+					Text: &msg,
+					ContextInfo: &waProto.ContextInfo{
+						MentionedJID: []string{v.Info.Sender.String()},
+					},
+				},
+			})
+		}
+
+		saveGroupSettings(s)
+	}
+}
+
+func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType string) {
+	if !v.Info.IsGroup {
+		msg := `╔════════════════╗
+║ ❌ GROUP ONLY
+╠════════════════
+║ Works in groups
+╚════════════════`
+		replyMessage(client, v, msg)
+		return
+	}
+
+	// ✅ OWNER CHECK - Same logic as command_start.go
+	if !isOwner(client, v.Info.Sender) {
+		msg := `╔════════════════╗
+║ 👑 OWNER ONLY
+╠════════════════
+║ ❌ YOU ARE NOT
+║ THE OWNER
+╚════════════════`
+		replyMessage(client, v, msg)
+		return
+	}
+
+	setupMap[v.Info.Sender.String()] = &SetupState{
+		Type:    secType,
+		Stage:   1,
+		GroupID: v.Info.Chat.String(),
+		User:    v.Info.Sender.String(),
 	}
 
 	msg := fmt.Sprintf(`╔════════════════╗
-║ ✅ MODE CHANGED
-╠════════════════╣
-║ 🛡️ %s
-║ 📝 %s
-║ ✅ Updated
-╚════════════════╝`, strings.ToUpper(mode), modeDesc)
+║ 🛡️ %s (1/2)
+╠════════════════
+║ ❓ Allow Admins?
+║ 1️⃣ YES
+║ 2️⃣ NO
+╚════════════════`, strings.ToUpper(secType))
 
 	replyMessage(client, v, msg)
 }
 
-func handleReadAllStatus(client *whatsmeow.Client, v *events.Message) {
-	if !isOwner(client, v.Info.Sender) {
+func handleSetupResponse(client *whatsmeow.Client, v *events.Message, state *SetupState) {
+	txt := strings.TrimSpace(getText(v.Message))
+	s := getGroupSettings(state.GroupID)
+
+	if state.Stage == 1 {
+		if txt == "1" {
+			s.AntilinkAdmin = true
+		} else if txt == "2" {
+			s.AntilinkAdmin = false
+		} else {
+			msg := `╔════════════════╗
+║ ❌ INVALID
+╠════════════════
+║ Reply: 1 or 2
+╚════════════════`
+			replyMessage(client, v, msg)
+			return
+		}
+		state.Stage = 2
+
+		msg := fmt.Sprintf(`╔════════════════╗
+║ ⚡ %s (2/2)
+╠════════════════
+║ 🎯 Choose Action:
+║ 1️⃣ DELETE ONLY
+║ 2️⃣ DELETE + KICK
+║ 3️⃣ DELETE + WARN
+╚════════════════`, strings.ToUpper(state.Type))
+
+		replyMessage(client, v, msg)
 		return
 	}
 
-	client.MarkRead(context.Background(), []types.MessageID{v.Info.ID}, time.Now(), types.NewJID("status@broadcast", types.DefaultUserServer), v.Info.Sender, types.ReceiptTypeRead)
+	if state.Stage == 2 {
+		var actionText string
+		switch txt {
+		case "1":
+			s.AntilinkAction = "delete"
+			actionText = "Delete Only"
+		case "2":
+			s.AntilinkAction = "deletekick"
+			actionText = "Delete + Kick"
+		case "3":
+			s.AntilinkAction = "deletewarn"
+			actionText = "Delete + Warn"
+		default:
+			msg := `╔════════════════╗
+║ ❌ INVALID
+╠════════════════
+║ Reply: 1, 2, 3
+╚════════════════`
+			replyMessage(client, v, msg)
+			return
+		}
 
-	msg := `╔════════════════╗
-║ ✅ STATUSES READ
-╠════════════════╣
-║ All marked read
-╚════════════════╝`
+		switch state.Type {
+		case "antilink":
+			s.Antilink = true
+		case "antipic":
+			s.AntiPic = true
+		case "antivideo":
+			s.AntiVideo = true
+		case "antisticker":
+			s.AntiSticker = true
+		}
 
-	replyMessage(client, v, msg)
+		saveGroupSettings(s)
+		delete(setupMap, state.User)
+
+		adminAllow := "YES ✅"
+		if !s.AntilinkAdmin {
+			adminAllow = "NO ❌"
+		}
+
+		msg := fmt.Sprintf(`╔════════════════╗
+║ ✅ %s ENABLED
+╠════════════════
+║ 🛡️ %s
+║ 👑 Admin: %s
+║ ⚡ Action: %s
+╚════════════════`,
+			strings.ToUpper(state.Type),
+			strings.ToUpper(state.Type),
+			adminAllow,
+			actionText)
+
+		replyMessage(client, v, msg)
+	}
+}
+
+func handleGroupEvents(client *whatsmeow.Client, evt interface{}) {
+	switch v := evt.(type) {
+	case *events.GroupInfo:
+		handleGroupInfoChange(client, v)
+	}
+}
+
+func handleGroupInfoChange(client *whatsmeow.Client, v *events.GroupInfo) {
+	if v.JID.IsEmpty() {
+		return
+	}
+
+	if v.Promote != nil && len(v.Promote) > 0 {
+		for _, promoted := range v.Promote {
+			msg := fmt.Sprintf(`╔════════════════╗
+║ 👑 ADMIN
+║ PROMOTED
+╠════════════════
+║ 👤 @%s
+║ 🎉 Congrats!
+╚════════════════`, promoted.User)
+
+			client.SendMessage(context.Background(), v.JID, &waProto.Message{
+				ExtendedTextMessage: &waProto.ExtendedTextMessage{
+					Text: &msg,
+					ContextInfo: &waProto.ContextInfo{
+						MentionedJID: []string{promoted.String()},
+					},
+				},
+			})
+		}
+	}
+
+	if v.Demote != nil && len(v.Demote) > 0 {
+		for _, demoted := range v.Demote {
+			msg := fmt.Sprintf(`╔════════════════╗
+║ 👤 ADMIN
+║ DEMOTED
+╠════════════════
+║ 👤 @%s
+║ 📉 Removed
+╚════════════════`, demoted.User)
+
+			client.SendMessage(context.Background(), v.JID, &waProto.Message{
+				ExtendedTextMessage: &waProto.ExtendedTextMessage{
+					Text: &msg,
+					ContextInfo: &waProto.ContextInfo{
+						MentionedJID: []string{demoted.String()},
+					},
+				},
+			})
+		}
+	}
+
+	if v.Join != nil && len(v.Join) > 0 {
+		for _, joined := range v.Join {
+			msg := fmt.Sprintf(`╔════════════════╗
+║ 👋 MEMBER
+║ JOINED
+╠════════════════
+║ 👤 @%s
+║ 🎉 Welcome!
+╚════════════════`, joined.User)
+
+			client.SendMessage(context.Background(), v.JID, &waProto.Message{
+				ExtendedTextMessage: &waProto.ExtendedTextMessage{
+					Text: &msg,
+					ContextInfo: &waProto.ContextInfo{
+						MentionedJID: []string{joined.String()},
+					},
+				},
+			})
+		}
+	}
+
+	if v.Leave != nil && len(v.Leave) > 0 {
+		for _, left := range v.Leave {
+			msg := fmt.Sprintf(`╔════════════════╗
+║ 👋 MEMBER LEFT
+╠════════════════
+║ 👤 @%s
+║ 👋 Left group
+╚════════════════`, left.User)
+
+			client.SendMessage(context.Background(), v.JID, &waProto.Message{
+				ExtendedTextMessage: &waProto.ExtendedTextMessage{
+					Text: &msg,
+					ContextInfo: &waProto.ContextInfo{
+						MentionedJID: []string{left.String()},
+					},
+				},
+			})
+		}
+	}
 }

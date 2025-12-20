@@ -12,43 +12,43 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// ==================== گروپ سسٹم ====================
 func handleKick(client *whatsmeow.Client, v *events.Message, args []string) {
 	groupAction(client, v, args, "remove")
 }
 
 func handleAdd(client *whatsmeow.Client, v *events.Message, args []string) {
 	if !v.Info.IsGroup {
-		msg := `╔═══════════════════════════╗
-║    ❌ GROUP ONLY COMMAND   ║
-╠═══════════════════════════╣
-║  This command works only  ║
-║  in group chats           ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ GROUP ONLY
+╠════════════════
+║ This command
+║ works only in
+║ group chats
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	if !isAdmin(client, v.Info.Chat, v.Info.Sender) && !isOwner(client, v.Info.Sender) {
-		msg := `╔═══════════════════════════╗
-║      ❌ ACCESS DENIED      ║
-╠═══════════════════════════╣
-║  🔒 Admin Only Command    ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ DENIED
+╠════════════════
+║ 🔒 Admin Only
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	if len(args) == 0 {
-		msg := `╔═══════════════════════════╗
-║    ⚠️ INVALID FORMAT       ║
-╠═══════════════════════════╣
-║  📝 Usage:                ║
-║     .add <number>         ║
-║                           ║
-║  💡 Example:              ║
-║     .add 923001234567     ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ⚠️ INVALID
+╠════════════════
+║ Usage:
+║ .add <number>
+║
+║ Example:
+║ .add 92300xxx
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
@@ -57,14 +57,12 @@ func handleAdd(client *whatsmeow.Client, v *events.Message, args []string) {
 	jid, _ := types.ParseJID(num + "@s.whatsapp.net")
 	client.UpdateGroupParticipants(context.Background(), v.Info.Chat, []types.JID{jid}, whatsmeow.ParticipantChangeAdd)
 
-	msg := fmt.Sprintf(`╔═══════════════════════════╗
-║   ✅ MEMBER ADDED           ║
-╠═══════════════════════════╣
-║                           ║
-║  👤 *Number:* %s          ║
-║  ✅ *Successfully Added*   ║
-║                           ║
-╚═══════════════════════════╝`, args[0])
+	msg := fmt.Sprintf(`╔════════════════╗
+║ ✅ ADDED
+╠════════════════
+║ Number: %s
+║ Added to group
+╚════════════════`, args[0])
 
 	replyMessage(client, v, msg)
 }
@@ -79,45 +77,44 @@ func handleDemote(client *whatsmeow.Client, v *events.Message, args []string) {
 
 func handleTagAll(client *whatsmeow.Client, v *events.Message, args []string) {
 	if !v.Info.IsGroup {
-		msg := `╔═══════════════════════════╗
-║    ❌ GROUP ONLY COMMAND   ║
-╠═══════════════════════════╣
-║  This command works only  ║
-║  in group chats           ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ GROUP ONLY
+╠════════════════
+║ This command
+║ works only in
+║ group chats
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	if !isAdmin(client, v.Info.Chat, v.Info.Sender) && !isOwner(client, v.Info.Sender) {
-		msg := `╔═══════════════════════════╗
-║      ❌ ACCESS DENIED      ║
-╠═══════════════════════════╣
-║  🔒 Admin Only Command    ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ DENIED
+╠════════════════
+║ 🔒 Admin Only
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	info, _ := client.GetGroupInfo(context.Background(), v.Info.Chat)
 	mentions := []string{}
-	out := "╔═══════════════════════════╗\n"
-	out += "║   📣 TAG ALL MEMBERS        ║\n"
-	out += "╠═══════════════════════════╣\n"
-	out += "║                           ║\n"
+	out := "╔════════════════╗\n"
+	out += "║ 📣 TAG ALL\n"
+	out += "╠════════════════\n"
 
 	if len(args) > 0 {
-		out += "║  💬 " + strings.Join(args, " ") + "\n║                           ║\n"
+		out += "║ 💬 " + strings.Join(args, " ") + "\n"
 	}
 
 	for _, p := range info.Participants {
 		mentions = append(mentions, p.JID.String())
-		out += "║  @" + p.JID.User + "\n"
+		out += "║ @" + p.JID.User + "\n"
 	}
 
-	out += "║                           ║\n"
-	out += fmt.Sprintf("║  👥 Total: %d members     ║\n", len(info.Participants))
-	out += "╚═══════════════════════════╝"
+	out += fmt.Sprintf("║ 👥 Total: %d\n", len(info.Participants))
+	out += "╚════════════════"
 
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		ExtendedTextMessage: &waProto.ExtendedTextMessage{
@@ -133,22 +130,23 @@ func handleTagAll(client *whatsmeow.Client, v *events.Message, args []string) {
 
 func handleHideTag(client *whatsmeow.Client, v *events.Message, args []string) {
 	if !v.Info.IsGroup {
-		msg := `╔═══════════════════════════╗
-║    ❌ GROUP ONLY COMMAND   ║
-╠═══════════════════════════╣
-║  This command works only  ║
-║  in group chats           ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ GROUP ONLY
+╠════════════════
+║ This command
+║ works only in
+║ group chats
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	if !isAdmin(client, v.Info.Chat, v.Info.Sender) && !isOwner(client, v.Info.Sender) {
-		msg := `╔═══════════════════════════╗
-║      ❌ ACCESS DENIED      ║
-╠═══════════════════════════╣
-║  🔒 Admin Only Command    ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ DENIED
+╠════════════════
+║ 🔒 Admin Only
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
@@ -158,7 +156,7 @@ func handleHideTag(client *whatsmeow.Client, v *events.Message, args []string) {
 	text := strings.Join(args, " ")
 
 	if text == "" {
-		text = "🔔 Hidden Tag Announcement"
+		text = "🔔 Hidden Tag"
 	}
 
 	for _, p := range info.Participants {
@@ -177,46 +175,45 @@ func handleHideTag(client *whatsmeow.Client, v *events.Message, args []string) {
 
 func handleGroup(client *whatsmeow.Client, v *events.Message, args []string) {
 	if !v.Info.IsGroup {
-		msg := `╔═══════════════════════════╗
-║    ❌ GROUP ONLY COMMAND   ║
-╠═══════════════════════════╣
-║  This command works only  ║
-║  in group chats           ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ GROUP ONLY
+╠════════════════
+║ This command
+║ works only in
+║ group chats
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	if !isAdmin(client, v.Info.Chat, v.Info.Sender) && !isOwner(client, v.Info.Sender) {
-		msg := `╔═══════════════════════════╗
-║      ❌ ACCESS DENIED      ║
-╠═══════════════════════════╣
-║  🔒 Admin Only Command    ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ DENIED
+╠════════════════
+║ 🔒 Admin Only
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	if len(args) == 0 {
-		msg := `╔═══════════════════════════╗
-║   ⚙️ GROUP SETTINGS         ║
-╠═══════════════════════════╣
-║                           ║
-║  📝 Available Commands:   ║
-║                           ║
-║  🔒 .group close          ║
-║     Close group messages  ║
-║                           ║
-║  🔓 .group open           ║
-║     Open group messages   ║
-║                           ║
-║  🔗 .group link           ║
-║     Get invite link       ║
-║                           ║
-║  🔄 .group revoke         ║
-║     Revoke invite link    ║
-║                           ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ⚙️ SETTINGS
+╠════════════════
+║ Commands:
+║
+║ 🔒 .group close
+║    Close group
+║
+║ 🔓 .group open
+║    Open group
+║
+║ 🔗 .group link
+║    Get link
+║
+║ 🔄 .group revoke
+║    Revoke link
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
@@ -224,54 +221,55 @@ func handleGroup(client *whatsmeow.Client, v *events.Message, args []string) {
 	switch strings.ToLower(args[0]) {
 	case "close":
 		client.SetGroupAnnounce(context.Background(), v.Info.Chat, true)
-		msg := `╔═══════════════════════════╗
-║   🔒 GROUP CLOSED           ║
-╠═══════════════════════════╣
-║  Only admins can send     ║
-║  messages now             ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ 🔒 CLOSED
+╠════════════════
+║ Only admins
+║ can send now
+╚════════════════`
 		replyMessage(client, v, msg)
 
 	case "open":
 		client.SetGroupAnnounce(context.Background(), v.Info.Chat, false)
-		msg := `╔═══════════════════════════╗
-║   🔓 GROUP OPENED           ║
-╠═══════════════════════════╣
-║  All members can send     ║
-║  messages now             ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ 🔓 OPENED
+╠════════════════
+║ All members
+║ can send now
+╚════════════════`
 		replyMessage(client, v, msg)
 
 	case "link":
 		code, _ := client.GetGroupInviteLink(context.Background(), v.Info.Chat, false)
-		msg := fmt.Sprintf(`╔═══════════════════════════╗
-║   🔗 GROUP INVITE LINK      ║
-╠═══════════════════════════╣
-║                           ║
-║  https://chat.whatsapp.com/║
-║  %s                       ║
-║                           ║
-╚═══════════════════════════╝`, code)
+		msg := fmt.Sprintf(`╔════════════════╗
+║ 🔗 LINK
+╠════════════════
+║ https://chat.
+║ whatsapp.com/
+║ %s
+╚════════════════`, code)
 		replyMessage(client, v, msg)
 
 	case "revoke":
 		client.GetGroupInviteLink(context.Background(), v.Info.Chat, true)
-		msg := `╔═══════════════════════════╗
-║   🔄 LINK REVOKED           ║
-╠═══════════════════════════╣
-║  Old invite link is now   ║
-║  invalid. Use .group link ║
-║  to get new one           ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ 🔄 REVOKED
+╠════════════════
+║ Old link is
+║ now invalid
+║ Use .group link
+║ for new one
+╚════════════════`
 		replyMessage(client, v, msg)
 
 	default:
-		msg := `╔═══════════════════════════╗
-║    ❌ INVALID OPTION       ║
-╠═══════════════════════════╣
-║  Use: close, open,        ║
-║       link, or revoke     ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ INVALID
+╠════════════════
+║ Use: close,
+║ open, link, or
+║ revoke
+╚════════════════`
 		replyMessage(client, v, msg)
 	}
 }
@@ -282,22 +280,23 @@ func handleDelete(client *whatsmeow.Client, v *events.Message) {
 	}
 
 	if !isAdmin(client, v.Info.Chat, v.Info.Sender) && !isOwner(client, v.Info.Sender) {
-		msg := `╔═══════════════════════════╗
-║      ❌ ACCESS DENIED      ║
-╠═══════════════════════════╣
-║  🔒 Admin Only Command    ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ DENIED
+╠════════════════
+║ 🔒 Admin Only
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	if v.Message.ExtendedTextMessage == nil {
-		msg := `╔═══════════════════════════╗
-║    ⚠️ INVALID USAGE        ║
-╠═══════════════════════════╣
-║  Reply to a message to    ║
-║  delete it                ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ⚠️ INVALID
+╠════════════════
+║ Reply to a
+║ message to
+║ delete it
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
@@ -309,32 +308,33 @@ func handleDelete(client *whatsmeow.Client, v *events.Message) {
 
 	client.RevokeMessage(context.Background(), v.Info.Chat, *ctx.StanzaID)
 
-	msg := `╔═══════════════════════════╗
-║   🗑️ MESSAGE DELETED        ║
-╠═══════════════════════════╣
-║  ✅ Successfully removed   ║
-╚═══════════════════════════╝`
+	msg := `╔════════════════╗
+║ 🗑️ DELETED
+╠════════════════
+║ ✅ Removed
+╚════════════════`
 	replyMessage(client, v, msg)
 }
 
 func groupAction(client *whatsmeow.Client, v *events.Message, args []string, action string) {
 	if !v.Info.IsGroup {
-		msg := `╔═══════════════════════════╗
-║    ❌ GROUP ONLY COMMAND   ║
-╠═══════════════════════════╣
-║  This command works only  ║
-║  in group chats           ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ GROUP ONLY
+╠════════════════
+║ This command
+║ works only in
+║ group chats
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	if !isAdmin(client, v.Info.Chat, v.Info.Sender) && !isOwner(client, v.Info.Sender) {
-		msg := `╔═══════════════════════════╗
-║      ❌ ACCESS DENIED      ║
-╠═══════════════════════════╣
-║  🔒 Admin Only Command    ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ DENIED
+╠════════════════
+║ 🔒 Admin Only
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
@@ -348,12 +348,11 @@ func groupAction(client *whatsmeow.Client, v *events.Message, args []string, act
 		}
 		jid, err := types.ParseJID(num)
 		if err != nil {
-			msg := `╔═══════════════════════════╗
-║    ❌ INVALID NUMBER       ║
-╠═══════════════════════════╣
-║  Please provide valid     ║
-║  phone number             ║
-╚═══════════════════════════╝`
+			msg := `╔════════════════╗
+║ ❌ INVALID
+╠════════════════
+║ Invalid number
+╚════════════════`
 			replyMessage(client, v, msg)
 			return
 		}
@@ -370,22 +369,23 @@ func groupAction(client *whatsmeow.Client, v *events.Message, args []string, act
 	}
 
 	if targetJID.User == "" {
-		msg := `╔═══════════════════════════╗
-║    ⚠️ NO USER SPECIFIED    ║
-╠═══════════════════════════╣
-║  Please mention or reply  ║
-║  to a user                ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ⚠️ NO USER
+╠════════════════
+║ Mention or
+║ reply to user
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	if targetJID.User == v.Info.Sender.User && action == "remove" {
-		msg := `╔═══════════════════════════╗
-║    ❌ INVALID ACTION       ║
-╠═══════════════════════════╣
-║  You cannot kick yourself ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ❌ INVALID
+╠════════════════
+║ Cannot kick
+║ yourself
+╚════════════════`
 		replyMessage(client, v, msg)
 		return
 	}
@@ -410,14 +410,12 @@ func groupAction(client *whatsmeow.Client, v *events.Message, args []string, act
 
 	client.UpdateGroupParticipants(context.Background(), v.Info.Chat, []types.JID{targetJID}, participantChange)
 
-	msg := fmt.Sprintf(`╔═══════════════════════════╗
-║   %s %s                    ║
-╠═══════════════════════════╣
-║                           ║
-║  👤 *User:* @%s           ║
-║  ✅ *Successfully %s*     ║
-║                           ║
-╚═══════════════════════════╝`, actionEmoji, strings.ToUpper(actionText), targetJID.User, actionText)
+	msg := fmt.Sprintf(`╔════════════════╗
+║ %s %s
+╠════════════════
+║ User: @%s
+║ ✅ Done
+╚════════════════`, actionEmoji, strings.ToUpper(actionText), targetJID.User)
 
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		ExtendedTextMessage: &waProto.ExtendedTextMessage{

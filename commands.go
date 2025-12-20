@@ -269,9 +269,9 @@ func isOwner(client *whatsmeow.Client, sender types.JID) bool {
 	}
 	
 	fmt.Printf(`
-╔═══════════════════════════════════╗
+╔═════════════════════════╗
 ║ 🎯 OWNER VERIFICATION CHECK
-╠═══════════════════════════════════╣
+╠═════════════════════════╣
 ║ 👤 Sender Clean : %s
 ║ 🆔 Bot LID Clean: %s
 ║ 📊 Match Type   : %s
@@ -334,17 +334,14 @@ func sendOwner(client *whatsmeow.Client, v *events.Message) {
 	botLIDClean := getBotLIDFromDB(client)
 	senderClean := getCleanID(v.Info.Sender.String())
 	
-	msg := fmt.Sprintf(`╔═══════════════════════════╗
+	msg := fmt.Sprintf(`╔═══════════════════╗
 ║ %s OWNER VERIFICATION
-╠═══════════════════════════╣
-║ 🆔 Bot DB LID  : %s
-║ 👤 Your ID     : %s
-╠═══════════════════════════╣
+╠═══════════════════╣
+║ 🆔 Bot ID  : %s
+║ 👤 Your ID : %s
+╠═══════════════════╣
 ║ 📊 Status: %s
-╠═══════════════════════════╣
-║ 💡 Matching DB LID with
-║    Sender ID (both clean)
-╚═══════════════════════════╝`, emoji, botLIDClean, senderClean, status)
+╚═══════════════════╝`, emoji, botLIDClean, senderClean, status)
 	
 	replyMessage(client, v, msg)
 }
@@ -353,14 +350,14 @@ func sendBotsList(client *whatsmeow.Client, v *events.Message) {
 	clientsMutex.RLock()
 	count := len(activeClients)
 	
-	msg := fmt.Sprintf(`╔═══════════════════════════╗
+	msg := fmt.Sprintf(`╔═══════════════════╗
 ║ 📊 MULTI-BOT STATUS
-╠═══════════════════════════╣
+╠═══════════════════╣
 ║ 🤖 Active Bots: %d
 ║ 🔄 Auto-Connect: ✅
 ║ 🔐 LID Security: ✅
 ║ 📡 DB Sync: ✅
-╠═══════════════════════════╣`, count)
+╠═══════════════════╣`, count)
 	
 	i := 1
 	for num := range activeClients {
