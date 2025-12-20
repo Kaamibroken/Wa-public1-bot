@@ -87,6 +87,7 @@ func main() {
 		}
 	} else {
 		fmt.Println("⏳ Waiting for pairing via website...")
+	}
 
 	// ------------------- WEB SERVER -------------------
 	gin.SetMode(gin.ReleaseMode)
@@ -229,7 +230,7 @@ func handlePairAPI(c *gin.Context) {
 			return
 		}
 		// Wait for connection to stabilize
-		time.Sleep(5 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 
 	fmt.Printf("📱 Generating pairing code for: %s\n", number)
