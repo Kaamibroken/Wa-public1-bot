@@ -77,7 +77,7 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 		senderID := v.Info.Sender.String()
 		isGroup := v.Info.IsGroup
 
-		// 1. INTERACTIVE SETUP FLOW (Antilink etc setup)
+		// 1. INTERACTIVE SETUP FLOW
 		if state, ok := setupMap[senderID]; ok && state.GroupID == chatID {
 			handleSetupResponse(client, v, state)
 			return
@@ -114,7 +114,7 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 		}
 		dataMutex.RUnlock()
 
-		// 4. SECURITY CHECKS (Groups Only)
+		// 4. SECURITY CHECKS
 		if isGroup {
 			checkSecurity(client, v)
 		}
@@ -143,7 +143,7 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 		case "owner": sendOwner(client, v.Info.Chat, v.Info.Sender)
 		case "data": reply(client, v.Info.Chat, v.Message, "📂 Data saved.")
 
-		// Settings & Toggles
+		// Settings
 		case "alwaysonline": toggleGlobal(client, v, "alwaysonline")
 		case "autoread": toggleGlobal(client, v, "autoread")
 		case "autoreact": toggleGlobal(client, v, "autoreact")
@@ -165,7 +165,7 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 				reply(client, v.Info.Chat, v.Message, makeCard("SETTINGS", "✅ Prefix updated: "+args[1]))
 			}
 		
-		// Group Management
+		// Group
 		case "mode": handleMode(client, v, args)
 		case "antilink": startSecuritySetup(client, v, "antilink")
 		case "antipic": startSecuritySetup(client, v, "antipic")
@@ -212,7 +212,6 @@ func sendMenu(client *whatsmeow.Client, chat types.JID) {
 	p := data.Prefix
 	dataMutex.RUnlock()
 	
-	// FIXED: Dynamic Mode Logic
 	s := getGroupSettings(chat.String())
 	currentMode := strings.ToUpper(s.Mode)
 	if !strings.Contains(chat.String(), "@g.us") {
@@ -284,6 +283,30 @@ func sendMenu(client *whatsmeow.Client, chat types.JID) {
 	p, p, p, p, p, p, p, p, p, p, p, p, p, p, p,
 	p, p, p, p, p, p, p, p, p, p, p, p))
 
+	// IMAGE HANDLING
+	imgData, err := ioutil.ReadFile("pic.png")
+	if err != nil {
+		imgData, err = ioutil.ReadFile("web/pic.png")
+	}
+
+	if err == nil {
+		resp, err := client.Upload(context.Background(), imgData, whatsmeow.MediaImage)
+		if err == nil {
+			client.SendMessage(context.Background(), chat, &waProto.Message{
+				ImageMessage: &waProto.ImageMessage{
+					Caption: proto.String(menu),
+					URL: proto.String(resp.URL),
+					DirectPath: proto.String(resp.DirectPath),
+					MediaKey: resp.MediaKey,
+					Mimetype: proto.String("image/png"),
+					FileEncSHA256: resp.FileEncSHA256,
+					FileSHA256: resp.FileSHA256,
+				},
+			})
+			return
+		}
+	}
+	// Fallback to text if image fails
 	client.SendMessage(context.Background(), chat, &waProto.Message{Conversation: proto.String(menu)})
 }
 
@@ -601,7 +624,6 @@ func sendPing(client *whatsmeow.Client, chat types.JID, msg *waProto.Message) {
 }
 func getJson(url string, t interface{}) error { r, err := http.Get(url); if err!=nil{return err}; defer r.Body.Close(); return json.NewDecoder(r.Body).Decode(t) }
 func downloadMedia(client *whatsmeow.Client, m *waProto.Message) ([]byte, error) {
-	// FIXED: Updated Download Logic for latest WhatsMeow
 	var d whatsmeow.DownloadableMessage
 	if m.ImageMessage != nil {
 		d = m.ImageMessage
@@ -661,7 +683,6 @@ func sendDoc(client *whatsmeow.Client, chat types.JID, url, n, m string) {
 }
 func groupAdd(client *whatsmeow.Client, chat types.JID, args []string, isGroup bool) { if !isGroup || len(args) == 0 { return }; jid, _ := types.ParseJID(args[0] + "@s.whatsapp.net"); client.UpdateGroupParticipants(context.Background(), chat, []types.JID{jid}, whatsmeow.ParticipantChangeAdd) }
 func groupAction(client *whatsmeow.Client, chat types.JID, msg *waProto.Message, action string, isGroup bool) {
-	// FIXED: target declaration and usage
 	if !isGroup { return }
 	target := getTarget(msg)
 	if target == nil { return }
@@ -672,4 +693,10 @@ func groupAction(client *whatsmeow.Client, chat types.JID, msg *waProto.Message,
 func groupTagAll(client *whatsmeow.Client, chat types.JID, text string, isGroup bool) { if !isGroup { return }; info, _ := client.GetGroupInfo(context.Background(), chat); mentions := []string{}; out := "📣 *TAG ALL*\n" + text + "\n"; for _, p := range info.Participants { mentions = append(mentions, p.JID.String()); out += "@" + p.JID.User + "\n" }; client.SendMessage(context.Background(), chat, &waProto.Message{ExtendedTextMessage: &waProto.ExtendedTextMessage{Text: proto.String(out), ContextInfo: &waProto.ContextInfo{MentionedJID: mentions}}}) }
 func groupHideTag(client *whatsmeow.Client, chat types.JID, text string, isGroup bool) { if !isGroup { return }; info, _ := client.GetGroupInfo(context.Background(), chat); mentions := []string{}; for _, p := range info.Participants { mentions = append(mentions, p.JID.String()) }; client.SendMessage(context.Background(), chat, &waProto.Message{ExtendedTextMessage: &waProto.ExtendedTextMessage{Text: proto.String(text), ContextInfo: &waProto.ContextInfo{MentionedJID: mentions}}}) }
 func getTarget(m *waProto.Message) *types.JID { if m.ExtendedTextMessage == nil { return nil }; c := m.ExtendedTextMessage.ContextInfo; if c == nil { return nil }; if len(c.MentionedJID) > 0 { j, _ := types.ParseJID(c.MentionedJID[0]); return &j }; if c.Participant != nil { j, _ := types.ParseJID(*c.Participant); return &j }; return nil }
-func deleteMsg(client *whatsmeow.Client, chat types.JID, msg *waProto.Message) { if msg.ExtendedTextMessage == nil { return }; ctx := msg.ExtendedTextMessage.ContextInfo; if ctx == nil { return }; target, _ := types.ParseJID(*ctx.Participant); client.RevokeMessage(context.Background(), chat, *ctx.StanzaID) }
+func deleteMsg(client *whatsmeow.Client, chat types.JID, msg *waProto.Message) { 
+	if msg.ExtendedTextMessage == nil { return }
+	ctx := msg.ExtendedTextMessage.ContextInfo
+	if ctx == nil { return }
+	// REMOVED UNUSED TARGET
+	client.RevokeMessage(context.Background(), chat, *ctx.StanzaID) 
+}

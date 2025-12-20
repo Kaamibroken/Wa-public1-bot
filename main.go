@@ -32,10 +32,10 @@ var (
 func main() {
 	fmt.Println("🚀 IMPOSSIBLE BOT FINAL V4 | STARTING SYSTEM...")
 
-	// 1. لوڈ ڈیٹا (یہ فنکشن commands.go میں ہے)
+	// 1. Load Data (Defined in commands.go)
 	loadData()
 
-	// 2. ڈیٹا بیس کنیکشن
+	// 2. Database Connection
 	dbURL := os.Getenv("DATABASE_URL")
 	dbType := "postgres"
 	if dbURL == "" {
@@ -50,7 +50,7 @@ func main() {
 		log.Fatalf("❌ DB Error: %v", err)
 	}
 
-	// 3. پرانے سیشنز بحال کرنا
+	// 3. Restore Sessions
 	devices, err := container.GetAllDevices(context.Background())
 	if err == nil {
 		fmt.Printf("🔄 Restoring %d sessions...\n", len(devices))
@@ -59,7 +59,7 @@ func main() {
 		}
 	}
 
-	// 4. ویب سرور سیٹ اپ
+	// 4. Web Server
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.LoadHTMLGlob("web/*.html")
@@ -71,19 +71,18 @@ func main() {
 		c.JSON(200, gin.H{"status": "Online", "sessions": count})
 	})
 	
-	// پیئرنگ API
 	r.POST("/api/pair", handlePairing)
 
 	go r.Run(":8080")
 	fmt.Println("🌐 Server running on :8080")
 
-	// 5. شٹ ڈاؤن ہینڈلر
+	// 5. Shutdown Handler
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
 
 	fmt.Println("🔻 Shutting down...")
-	saveData() // یہ commands.go میں ہے
+	saveData() // Defined in commands.go
 	clientMutex.Lock()
 	for _, cli := range clientMap {
 		cli.Disconnect()
@@ -93,10 +92,8 @@ func main() {
 
 // --- 🔌 CLIENT CONNECTION ---
 func connectClient(device *store.Device) {
-	// کلائنٹ بنانا
 	client := whatsmeow.NewClient(device, waLog.Stdout("Client", "INFO", true))
 	
-	// ایونٹ ہینڈلر جوڑنا (یہ commands.go میں ہے)
 	client.AddEventHandler(func(evt interface{}) {
 		handler(client, evt)
 	})
@@ -107,10 +104,8 @@ func connectClient(device *store.Device) {
 		clientMutex.Unlock()
 		fmt.Printf("✅ Connected: %s\n", client.Store.ID.User)
 		
-		// اگر Always Online آن ہے (commands.go سے ڈیٹا لیا گیا)
 		dataMutex.RLock()
 		if data.AlwaysOnline {
-			// FIXED: Added context.Background() for latest version
 			client.SendPresence(context.Background(), types.PresenceAvailable)
 		}
 		dataMutex.RUnlock()
@@ -132,7 +127,6 @@ func handlePairing(c *gin.Context) {
 		return
 	}
 
-	// کروم/لینکس کلائنٹ کے طور پر پیئر کرنا
 	code, err := client.PairPhone(context.Background(), num, true, whatsmeow.PairClientChrome, "Linux")
 	if err != nil {
 		client.Disconnect()
