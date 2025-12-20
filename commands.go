@@ -372,24 +372,6 @@ func sendOwner(client *whatsmeow.Client, v *events.Message) {
 	sendReplyMessage(client, v, msg)
 }
 
-	msg := fmt.Sprintf(`╔════════════════════╗
-║  %s OWNER VERIFICATION   
-╠════════════════════╣
-║                           
-║  🤖 *Bot Number:*          
-║     %s                    
-║                           
-║  👤 *Your Number:*         
-║     %s                    
-║                           
-║  📊 *Status:*              
-║     %s                    
-║                           
-╚════════════════════╝`, statusIcon, botNum, userNum, status)
-
-	sendReplyMessage(client, v, msg)
-}
-
 // ==================== HELPER FUNCTIONS ====================
 func react(client *whatsmeow.Client, chat types.JID, msgID types.MessageID, emoji string) {
 	client.SendMessage(context.Background(), chat, &waProto.Message{
