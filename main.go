@@ -124,13 +124,56 @@ func eventHandler(evt interface{}) {
 		}
 
 		text := strings.ToLower(strings.TrimSpace(getText(v.Message)))
+		
+		// Log incoming message for debugging
+		fmt.Printf("📩 Message from %s: %s\n", v.Info.Sender.User, text)
 
-		switch text {
-		case "#menu":
-			sendMenu(v.Info.Chat)
-		case "#ping":
-			sendPing(v.Info.Chat)
+		// Handle list response
+		if v.Message.GetListResponseMessage() != nil {
+			handleListResponse(v)
+			return
 		}
+
+		// Handle text commands
+		switch text {
+		case "#menu", "menu", "/menu":
+			fmt.Println("📋 Sending menu...")
+			sendMenu(v.Info.Chat)
+		case "#ping", "ping", "/ping":
+			fmt.Println("⚡ Sending ping...")
+			sendPing(v.Info.Chat)
+		case "#info", "info", "/info":
+			fmt.Println("ℹ️ Sending info...")
+			sendInfo(v.Info.Chat)
+		default:
+			// Log unhandled messages
+			if text != "" {
+				fmt.Printf("❓ Unhandled command: %s\n", text)
+			}
+		}
+	case *events.Connected:
+		fmt.Println("✅ Bot connected to WhatsApp")
+	case *events.Disconnected:
+		fmt.Println("⚠️ Bot disconnected from WhatsApp")
+	}
+}
+
+func handleListResponse(v *events.Message) {
+	listResponse := v.Message.GetListResponseMessage()
+	if listResponse == nil {
+		return
+	}
+
+	selectedID := listResponse.GetSingleSelectReply().GetSelectedRowId()
+	fmt.Printf("📌 List response: %s\n", selectedID)
+
+	switch selectedID {
+	case "cmd_ping":
+		sendPing(v.Info.Chat)
+	case "cmd_info":
+		sendInfo(v.Info.Chat)
+	default:
+		fmt.Printf("❓ Unknown list option: %s\n", selectedID)
 	}
 }
 
@@ -152,7 +195,7 @@ func getText(msg *waProto.Message) string {
 func sendMenu(chat types.JID) {
 	menu := &waProto.ListMessage{
 		Title:       proto.String("🚀 IMPOSSIBLE MENU"),
-		Description: proto.String("براہ کرم کوئی آپشن منتخب کریں"),
+		Description: proto.String("براہ کرم کوئی آپشن منتخب کریں\nPlease select an option"),
 		ButtonText:  proto.String("📋 مینو کھولیں"),
 		ListType:    waProto.ListMessage_SINGLE_SELECT.Enum(),
 		Sections: []*waProto.ListMessage_Section{
@@ -174,9 +217,15 @@ func sendMenu(chat types.JID) {
 		},
 	}
 
-	client.SendMessage(context.Background(), chat, &waProto.Message{
+	_, err := client.SendMessage(context.Background(), chat, &waProto.Message{
 		ListMessage: menu,
 	})
+	
+	if err != nil {
+		fmt.Printf("❌ Error sending menu: %v\n", err)
+	} else {
+		fmt.Println("✅ Menu sent successfully")
+	}
 }
 
 // ================= PING =================
@@ -202,9 +251,39 @@ func sendPing(chat types.JID) {
 		uptime,
 	)
 
+	_, err := client.SendMessage(context.Background(), chat, &waProto.Message{
+		Conversation: proto.String(msg),
+	})
+	
+	if err != nil {
+		fmt.Printf("❌ Error sending ping: %v\n", err)
+	} else {
+		fmt.Println("✅ Ping sent successfully")
+	}
+}
+
+// ================= INFO =================
+
+func sendInfo(chat types.JID) {
+	uptime := time.Since(startTime).Round(time.Second)
+	
+	msg := fmt.Sprintf(
+		"╔══════════════════╗\n"+
+			"║ 🤖 BOT INFO\n"+
+			"╠══════════════════╣\n"+
+			"║ 📛 IMPOSSIBLE BOT\n"+
+			"║ 👨‍💻 %s\n"+
+			"║ ⏱ UPTIME: %s\n"+
+			"║ 🏷 VERSION: 1.0\n"+
+			"╚══════════════════╝",
+		DEV_NAME,
+		uptime,
+	)
+
 	client.SendMessage(context.Background(), chat, &waProto.Message{
 		Conversation: proto.String(msg),
 	})
+	fmt.Println("✅ Info sent")
 }
 
 // ================= PAIR API =================
@@ -248,7 +327,7 @@ func handlePairAPI(c *gin.Context) {
 	}
 
 	// Wait for connection to stabilize
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	fmt.Printf("📱 Generating pairing code for: %s\n", number)
 	code, err := client.PairPhone(
