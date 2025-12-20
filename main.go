@@ -52,19 +52,19 @@ var (
 func main() {
 	fmt.Println("🚀 IMPOSSIBLE BOT FINAL V4 | STARTING SYSTEM...")
 
-	// 1. Connect MongoDB (For Data Persistence)
+	// 1. Connect MongoDB
 	connectMongo()
 
-	// 2. Load Global Data from Mongo (Defined in commands.go)
+	// 2. Load Data (Logic in commands.go)
 	loadDataFromMongo()
 
-	// 3. Connect PostgreSQL (For WhatsApp Sessions)
+	// 3. PostgreSQL Connection
 	dbURL := os.Getenv("DATABASE_URL")
 	dbType := "postgres"
 	if dbURL == "" {
 		dbType = "sqlite3"
 		dbURL = "file:impossible_sessions.db?_foreign_keys=on"
-		fmt.Println("⚠️ Using SQLite. Set DATABASE_URL in Railway for persistent sessions.")
+		fmt.Println("⚠️ Using SQLite. Set DATABASE_URL for Production.")
 	} else {
 		fmt.Println("✅ Using PostgreSQL for Sessions.")
 	}
@@ -89,8 +89,8 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.LoadHTMLGlob("web/*.html")
-	r.StaticFile("/pic.png", "./pic.png") // Fallback if in root
-	r.Static("/web", "./web")             // Serve web folder
+	r.StaticFile("/pic.png", "./pic.png")
+	r.Static("/web", "./web")
 
 	r.GET("/", func(c *gin.Context) { c.HTML(200, "index.html", nil) })
 	r.GET("/ws", handleWebSocket)
@@ -118,10 +118,7 @@ func main() {
 
 // --- 🍃 MONGODB CONNECTION ---
 func connectMongo() {
-	// User provided URL
 	mongoURL := "mongodb://mongo:AEvrikOWlrmJCQrDTQgfGtqLlwhwLuAA@crossover.proxy.rlwy.net:29609"
-	
-	// Check if ENV overrides it
 	if envUrl := os.Getenv("MONGO_URL"); envUrl != "" {
 		mongoURL = envUrl
 	}
@@ -138,7 +135,6 @@ func connectMongo() {
 		log.Fatal("❌ MongoDB Connection Error: ", err)
 	}
 
-	// Ping to verify
 	if err := mongoClient.Ping(ctx, nil); err != nil {
 		log.Fatal("❌ MongoDB Ping Failed: ", err)
 	}
@@ -194,7 +190,6 @@ func handlePairing(c *gin.Context) {
 	client.AddEventHandler(func(evt interface{}) { handler(client, evt) })
 	
 	clientMutex.Lock()
-	// Temporary map add, explicit add happens on Login event usually
 	if client.Store.ID != nil {
 		clientMap[client.Store.ID.String()] = client
 	}

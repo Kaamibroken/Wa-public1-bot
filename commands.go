@@ -31,7 +31,7 @@ const (
 	OWNER_NUMBER = "92311xxxxxxx"
 )
 
-// --- 💾 DATA STRUCTURES (BSON Added) ---
+// --- 💾 DATA STRUCTURES ---
 type GroupSettings struct {
 	ChatID         string         `bson:"chat_id" json:"chat_id"`
 	Mode           string         `bson:"mode" json:"mode"`
@@ -45,7 +45,7 @@ type GroupSettings struct {
 }
 
 type BotData struct {
-	ID            string   `bson:"_id" json:"id"` // "global"
+	ID            string   `bson:"_id" json:"id"`
 	Prefix        string   `bson:"prefix" json:"prefix"`
 	AlwaysOnline  bool     `bson:"always_online" json:"always_online"`
 	AutoRead      bool     `bson:"auto_read" json:"auto_read"`
@@ -68,7 +68,6 @@ var (
 	data        BotData
 	dataMutex   sync.RWMutex
 	setupMap    = make(map[string]*SetupState)
-	// Local cache for group settings to avoid too many DB hits
 	groupCache  = make(map[string]*GroupSettings)
 	cacheMutex  sync.RWMutex
 )
@@ -83,13 +82,13 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 		senderID := v.Info.Sender.String()
 		isGroup := v.Info.IsGroup
 
-		// 1. INTERACTIVE SETUP FLOW
+		// 1. SETUP FLOW
 		if state, ok := setupMap[senderID]; ok && state.GroupID == chatID {
 			handleSetupResponse(client, v, state)
 			return
 		}
 
-		// 2. AUTO READ STATUS
+		// 2. AUTO STATUS
 		if chatID == "status@broadcast" {
 			dataMutex.RLock()
 			if data.AutoStatus {
@@ -110,7 +109,7 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 			return
 		}
 
-		// 3. AUTO READ & REACT
+		// 3. AUTO READ
 		dataMutex.RLock()
 		if data.AutoRead {
 			client.MarkRead(context.Background(), []types.MessageID{v.Info.ID}, v.Info.Timestamp, v.Info.Chat, v.Info.Sender, types.ReceiptTypeRead)
@@ -120,7 +119,7 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 		}
 		dataMutex.RUnlock()
 
-		// 4. SECURITY CHECKS (Groups Only)
+		// 4. SECURITY
 		if isGroup {
 			checkSecurity(client, v)
 		}
@@ -148,7 +147,6 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 		case "owner": sendOwner(client, v.Info.Chat, v.Info.Sender)
 		case "data": reply(client, v.Info.Chat, v.Message, "📂 Data is safe in MongoDB.")
 
-		// Settings
 		case "alwaysonline": toggleGlobal(client, v, "alwaysonline")
 		case "autoread": toggleGlobal(client, v, "autoread")
 		case "autoreact": toggleGlobal(client, v, "autoreact")
@@ -170,7 +168,6 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 				reply(client, v.Info.Chat, v.Message, makeCard("SETTINGS", "✅ Prefix updated: "+args[1]))
 			}
 		
-		// Group
 		case "mode": handleMode(client, v, args)
 		case "antilink": startSecuritySetup(client, v, "antilink")
 		case "antipic": startSecuritySetup(client, v, "antipic")
@@ -186,7 +183,6 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 		case "group": handleGroupCmd(client, v.Info.Chat, args[1:], isGroup)
 		case "del", "delete": deleteMsg(client, v.Info.Chat, v.Message)
 
-		// Downloaders
 		case "tiktok", "tt": dlTikTok(client, v.Info.Chat, fullArgs, v.Message)
 		case "fb", "facebook": dlFacebook(client, v.Info.Chat, fullArgs, v.Message)
 		case "insta", "ig": dlInstagram(client, v.Info.Chat, fullArgs, v.Message)
@@ -194,7 +190,6 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 		case "ytmp3": dlYouTube(client, v.Info.Chat, fullArgs, "mp3", v.Message)
 		case "ytmp4": dlYouTube(client, v.Info.Chat, fullArgs, "mp4", v.Message)
 
-		// Tools
 		case "sticker", "s": makeSticker(client, v.Info.Chat, v.Message)
 		case "toimg": stickerToImg(client, v.Info.Chat, v.Message)
 		case "tovideo": stickerToVideo(client, v.Info.Chat, v.Message)
@@ -213,14 +208,12 @@ func handler(client *whatsmeow.Client, evt interface{}) {
 func loadDataFromMongo() {
 	if mongoColl == nil { return }
 	
-	// Load Global Config
 	res := mongoColl.FindOne(context.Background(), bson.M{"_id": "global"})
 	if res.Err() == nil {
 		dataMutex.Lock()
 		res.Decode(&data)
 		dataMutex.Unlock()
 	} else {
-		// Initialize Defaults
 		dataMutex.Lock()
 		data.ID = "global"
 		data.Prefix = "#"
@@ -239,7 +232,6 @@ func saveDataToMongo() {
 }
 
 func getGroupSettings(id string) *GroupSettings {
-	// 1. Check Memory Cache
 	cacheMutex.RLock()
 	if s, ok := groupCache[id]; ok {
 		cacheMutex.RUnlock()
@@ -247,7 +239,6 @@ func getGroupSettings(id string) *GroupSettings {
 	}
 	cacheMutex.RUnlock()
 
-	// 2. Fetch from Mongo
 	s := &GroupSettings{
 		ChatID: id, Mode: "public", AntilinkAdmin: true, AntilinkAction: "delete", 
 		Warnings: make(map[string]int),
@@ -260,7 +251,6 @@ func getGroupSettings(id string) *GroupSettings {
 		}
 	}
 
-	// 3. Save to Cache
 	cacheMutex.Lock()
 	groupCache[id] = s
 	cacheMutex.Unlock()
@@ -268,12 +258,10 @@ func getGroupSettings(id string) *GroupSettings {
 }
 
 func saveGroupSettings(s *GroupSettings) {
-	// Update Cache
 	cacheMutex.Lock()
 	groupCache[s.ChatID] = s
 	cacheMutex.Unlock()
 
-	// Update Mongo
 	if mongoColl != nil {
 		opts := options.Update().SetUpsert(true)
 		mongoColl.UpdateOne(context.Background(), bson.M{"chat_id": s.ChatID}, bson.M{"$set": s}, opts)
@@ -360,7 +348,6 @@ func sendMenu(client *whatsmeow.Client, chat types.JID) {
 	p, p, p, p, p, p, p, p, p, p, p, p, p, p, p,
 	p, p, p, p, p, p, p, p, p, p, p, p))
 
-	// IMAGE HANDLING
 	imgData, err := ioutil.ReadFile("pic.png")
 	if err != nil {
 		imgData, err = ioutil.ReadFile("web/pic.png")
@@ -459,7 +446,7 @@ func handleSetupResponse(client *whatsmeow.Client, v *events.Message, state *Set
 		case "antisticker": s.AntiSticker = true
 		}
 		
-		saveGroupSettings(s) // Save to Mongo
+		saveGroupSettings(s)
 		delete(setupMap, state.User)
 		reply(client, v.Info.Chat, v.Message, makeCard("✅ "+strings.ToUpper(state.Type)+" ENABLED", fmt.Sprintf("👑 Admin Allow: %v\n⚡ Action: %s", s.AntilinkAdmin, strings.ToUpper(s.AntilinkAction))))
 	}
@@ -484,7 +471,7 @@ func checkSecurity(client *whatsmeow.Client, v *events.Message) {
 			client.UpdateGroupParticipants(context.Background(), v.Info.Chat, []types.JID{v.Info.Sender}, whatsmeow.ParticipantChangeRemove)
 		} else if s.AntilinkAction == "warn" {
 			s.Warnings[v.Info.Sender.String()]++
-			saveGroupSettings(s) // Update warnings in Mongo
+			saveGroupSettings(s)
 			if s.Warnings[v.Info.Sender.String()] >= 3 {
 				client.UpdateGroupParticipants(context.Background(), v.Info.Chat, []types.JID{v.Info.Sender}, whatsmeow.ParticipantChangeRemove)
 				delete(s.Warnings, v.Info.Sender.String())
@@ -610,7 +597,7 @@ func handleMode(client *whatsmeow.Client, v *events.Message, args []string) {
 	if !isAdmin(client, v.Info.Chat, v.Info.Sender) && !isOwner(client, v.Info.Sender) { return }
 	if len(args) < 2 { return }
 	s := getGroupSettings(v.Info.Chat.String()); s.Mode = strings.ToLower(args[1]); 
-	saveGroupSettings(s) // Update Mongo
+	saveGroupSettings(s)
 	reply(client, v.Info.Chat, v.Message, makeCard("MODE CHANGED", "🔒 Mode: "+strings.ToUpper(s.Mode)))
 }
 
