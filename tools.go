@@ -23,22 +23,22 @@ import (
 func handleSticker(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "🎨")
 	
-	msg := `╔═══════════════════════════╗
-║   🎨 STICKER PROCESSING    ║
-╠═══════════════════════════╣
-║  ⏳ Creating sticker...    ║
-║  Please wait...           ║
-╚═══════════════════════════╝`
+	msg := `╔═════════════════════╗
+║   🎨 STICKER PROCESSING    
+╠═════════════════════╣
+║  ⏳ Creating sticker...    
+║  Please wait...           
+╚═════════════════════╝`
 	replyMessage(client, v, msg)
 
 	data, err := downloadMedia(client, v.Message)
 	if err != nil {
-		errMsg := `╔═══════════════════════════╗
-║    ❌ NO MEDIA FOUND       ║
-╠═══════════════════════════╣
-║  Reply to an image or     ║
-║  video to create sticker  ║
-╚═══════════════════════════╝`
+		errMsg := `╔═════════════════╗
+║  ❌ NO MEDIA FOUND       
+╠═════════════════╣
+║  Reply to an image or     
+║  video to create sticker  
+╚═════════════════╝`
 		replyMessage(client, v, errMsg)
 		return
 	}
@@ -66,22 +66,22 @@ func handleSticker(client *whatsmeow.Client, v *events.Message) {
 func handleToImg(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "🖼️")
 	
-	msg := `╔═══════════════════════════╗
-║   🖼️ IMAGE CONVERSION      ║
-╠═══════════════════════════╣
-║  ⏳ Converting to image... ║
-║  Please wait...           ║
-╚═══════════════════════════╝`
+		errMsg := `╔══════════════════╗
+║ 🖼️ IMAGE CONVERSION      
+╠══════════════════╣
+║ ⏳ Converting to image... 
+║       Please wait...           
+╚══════════════════╝`
 	replyMessage(client, v, msg)
 
 	data, err := downloadMedia(client, v.Message)
 	if err != nil {
-		errMsg := `╔═══════════════════════════╗
-║    ❌ NO STICKER FOUND     ║
-╠═══════════════════════════╣
-║  Reply to a sticker to    ║
-║  convert it to image      ║
-╚═══════════════════════════╝`
+		errMsg := `╔══════════════════╗
+║  ❌ NO STICKER FOUND     
+╠══════════════════╣
+║  Reply to a sticker to    
+║  convert it to image      
+╚══════════════════╝`
 		replyMessage(client, v, errMsg)
 		return
 	}
@@ -115,22 +115,22 @@ func handleToImg(client *whatsmeow.Client, v *events.Message) {
 func handleToVideo(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "🎥")
 	
-	msg := `╔═══════════════════════════╗
-║   🎥 VIDEO CONVERSION      ║
-╠═══════════════════════════╣
-║  ⏳ Converting to video... ║
-║  Please wait...           ║
-╚═══════════════════════════╝`
+	msg := `╔═════════════════╗
+║ 🎥 VIDEO CONVERSION      
+╠═════════════════╣
+║ ⏳ Converting to video... 
+║       Please wait...           
+╚═════════════════╝`
 	replyMessage(client, v, msg)
 
 	data, err := downloadMedia(client, v.Message)
 	if err != nil {
-		errMsg := `╔═══════════════════════════╗
-║    ❌ NO STICKER FOUND     ║
-╠═══════════════════════════╣
-║  Reply to a sticker to    ║
-║  convert it to video      ║
-╚═══════════════════════════╝`
+		errMsg := `╔══════════════════╗
+║  ❌ NO STICKER FOUND     
+╠══════════════════╣
+║  Reply to a sticker to    
+║  convert it to video      
+╚══════════════════╝`
 		replyMessage(client, v, errMsg)
 		return
 	}
@@ -164,22 +164,22 @@ func handleToVideo(client *whatsmeow.Client, v *events.Message) {
 func handleRemoveBG(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "✂️")
 	
-	msg := `╔═══════════════════════════╗
-║   ✂️ BACKGROUND REMOVAL     ║
-╠═══════════════════════════╣
-║  ⏳ Removing background... ║
-║  Please wait...           ║
-╚═══════════════════════════╝`
+	msg := `╔════════════════════╗
+║ ✂️ BACKGROUND REMOVAL     
+╠════════════════════╣
+║  ⏳ Removing background... 
+║          Please wait...           
+╚════════════════════╝`
 	replyMessage(client, v, msg)
 
 	d, err := downloadMedia(client, v.Message)
 	if err != nil {
-		errMsg := `╔═══════════════════════════╗
-║    ❌ NO IMAGE FOUND       ║
-╠═══════════════════════════╣
-║  Reply to an image to     ║
-║  remove background        ║
-╚═══════════════════════════╝`
+		errMsg := `╔═════════════════╗
+║  ❌ NO IMAGE FOUND       
+╠═════════════════╣
+║  Reply to an image to     
+║  remove background        
+╚═════════════════╝`
 		replyMessage(client, v, errMsg)
 		return
 	}
@@ -212,22 +212,22 @@ func handleRemoveBG(client *whatsmeow.Client, v *events.Message) {
 func handleRemini(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "✨")
 	
-	msg := `╔═══════════════════════════╗
-║   ✨ IMAGE ENHANCEMENT     ║
-╠═══════════════════════════╣
-║  ⏳ Enhancing image...     ║
-║  Please wait...           ║
-╚═══════════════════════════╝`
+	msg := `╔═══════════════════╗
+║ ✨ IMAGE ENHANCEMENT     
+╠═══════════════════╣
+║  ⏳ Enhancing image...     
+║       Please wait...           
+╚═══════════════════╝`
 	replyMessage(client, v, msg)
 
 	d, err := downloadMedia(client, v.Message)
 	if err != nil {
-		errMsg := `╔═══════════════════════════╗
-║    ❌ NO IMAGE FOUND       ║
-╠═══════════════════════════╣
-║  Reply to an image to     ║
-║  enhance quality          ║
-╚═══════════════════════════╝`
+		errMsg := `╔════════════════╗
+║ ❌ NO IMAGE FOUND       
+╠════════════════╣
+║  Reply to an image to     
+║  enhance quality          
+╚════════════════╝`
 		replyMessage(client, v, errMsg)
 		return
 	}
@@ -261,12 +261,12 @@ func handleRemini(client *whatsmeow.Client, v *events.Message) {
 			},
 		})
 	} else {
-		errMsg := `╔═══════════════════════════╗
-║    ❌ ENHANCEMENT FAILED   ║
-╠═══════════════════════════╣
-║  Could not enhance image  ║
-║  Please try again         ║
-╚═══════════════════════════╝`
+		errMsg := `╔═══════════════════╗
+║ ❌ ENHANCEMENT FAILED   
+╠═══════════════════╣
+║  Could not enhance image  
+║       Please try again         
+╚═══════════════════╝`
 		replyMessage(client, v, errMsg)
 	}
 }
@@ -274,55 +274,55 @@ func handleRemini(client *whatsmeow.Client, v *events.Message) {
 func handleToURL(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "🔗")
 	
-	msg := `╔═══════════════════════════╗
-║   🔗 UPLOADING MEDIA       ║
-╠═══════════════════════════╣
-║  ⏳ Uploading to server... ║
-║  Please wait...           ║
-╚═══════════════════════════╝`
+	msg := `╔══════════════════╗
+║  🔗 UPLOADING MEDIA       
+╠══════════════════╣
+║ ⏳ Uploading to server... 
+║         Please wait...           
+╚══════════════════╝`
 	replyMessage(client, v, msg)
 
 	d, err := downloadMedia(client, v.Message)
 	if err != nil {
-		errMsg := `╔═══════════════════════════╗
-║    ❌ NO MEDIA FOUND       ║
-╠═══════════════════════════╣
-║  Reply to media to get URL║
-╚═══════════════════════════╝`
+		errMsg := `╔═════════════════╗
+║  ❌ NO MEDIA FOUND       
+╠═══════════════════╣
+║ Reply to media to get URL
+╚═══════════════════╝`
 		replyMessage(client, v, errMsg)
 		return
 	}
 
 	uploadURL := uploadToCatbox(d)
 	
-	resultMsg := fmt.Sprintf(`╔═══════════════════════════╗
-║   🔗 MEDIA UPLOADED        ║
-╠═══════════════════════════╣
-║                           ║
-║  📎 *Direct Link:*        ║
-║  %s                       ║
-║                           ║
-║  ✅ *Successfully Uploaded*║
-║                           ║
-╚═══════════════════════════╝`, uploadURL)
+	resultMsg := fmt.Sprintf(`╔═════════════════╗
+║  🔗 MEDIA UPLOADED        
+╠═════════════════╣
+║                           
+║  📎 *Direct Link:*        
+║  %s                       
+║                           
+║ ✅ *Successfully Uploaded*
+║                           
+╚═══════════════════╝`, uploadURL)
 
 	replyMessage(client, v, resultMsg)
 }
 
 func handleWeather(client *whatsmeow.Client, v *events.Message, city string) {
 	if city == "" {
-		msg := `╔═══════════════════════════╗
-║   🌤️ WEATHER INFORMATION   ║
-╠═══════════════════════════╣
-║                           ║
-║  Usage:                   ║
-║  .weather <city>          ║
-║                           ║
-║  Example:                 ║
-║  .weather Karachi         ║
-║  .weather London          ║
-║                           ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════════╗
+║🌤️ WEATHER INFORMATION   
+╠════════════════════╣
+║                           
+║  Usage:                   
+║  .weather <city>          
+║                           
+║  Example:                 
+║  .weather Karachi         
+║             .weather London          
+║                           
+╚════════════════════╝`
 		replyMessage(client, v, msg)
 		return
 	}
@@ -331,12 +331,12 @@ func handleWeather(client *whatsmeow.Client, v *events.Message, city string) {
 	
 	r, err := http.Get("https://wttr.in/" + city + "?format=%C+%t")
 	if err != nil {
-		errMsg := `╔═══════════════════════════╗
-║    ❌ WEATHER FETCH FAILED ║
-╠═══════════════════════════╣
-║  Could not get weather    ║
-║  Please check city name   ║
-╚═══════════════════════════╝`
+		errMsg := `╔═══════════════════╗
+║❌ WEATHER FETCH FAILED 
+╠═══════════════════╣
+║   Could not get weather    
+║   Please check city name   
+╚═══════════════════╝`
 		replyMessage(client, v, errMsg)
 		return
 	}
@@ -344,14 +344,14 @@ func handleWeather(client *whatsmeow.Client, v *events.Message, city string) {
 	d, _ := ioutil.ReadAll(r.Body)
 	weatherInfo := string(d)
 
-	msg := fmt.Sprintf(`╔═══════════════════════════╗
-║   🌤️ WEATHER INFO          ║
-╠═══════════════════════════╣
-║                           ║
-║  📍 *City:* %s            ║
-║  🌡️ *Info:* %s            ║
-║                           ║
-╚═══════════════════════════╝`, city, weatherInfo)
+	msg := fmt.Sprintf(`╔═══════════════╗
+║ 🌤️ WEATHER INFO          
+╠═══════════════╣
+║                           
+║  📍 *City:* %s            
+║  🌡️ *Info:* %s            
+║                           
+╚═══════════════╝`, city, weatherInfo)
 
 	replyMessage(client, v, msg)
 }
@@ -370,17 +370,17 @@ func handleTranslate(client *whatsmeow.Client, v *events.Message, args []string)
 	}
 
 	if t == "" {
-		msg := `╔═══════════════════════════╗
-║   🌍 TRANSLATOR            ║
-╠═══════════════════════════╣
-║                           ║
-║  Usage:                   ║
-║  .tr <text>               ║
-║                           ║
-║  Or reply to message with:║
-║  .tr                      ║
-║                           ║
-╚═══════════════════════════╝`
+		msg := `╔══════════════╗
+║   🌍 TRANSLATOR            
+╠══════════════╣
+║                           
+║  Usage:                   
+║  .tr <text>               
+║                           
+║  Or reply to message with:
+║  .tr                      
+║                           
+╚═══════════════════╝`
 		replyMessage(client, v, msg)
 		return
 	}
@@ -391,26 +391,26 @@ func handleTranslate(client *whatsmeow.Client, v *events.Message, args []string)
 
 	if len(res) > 0 {
 		translated := res[0].([]interface{})[0].([]interface{})[0].(string)
-		msg := fmt.Sprintf(`╔═══════════════════════════╗
-║   🌍 TRANSLATION RESULT    ║
-╠═══════════════════════════╣
-║                           ║
-║  📝 *Original:*           ║
-║  %s                       ║
-║                           ║
-║  📝 *Translated:*         ║
-║  %s                       ║
-║                           ║
-╚═══════════════════════════╝`, t, translated)
+		msg := fmt.Sprintf(`╔═══════════════════╗
+║ 🌍 TRANSLATION RESULT    
+╠═══════════════════╣
+║                           
+║  📝 *Original:*           
+║  %s                       
+║                           
+║  📝 *Translated:*         
+║  %s                       
+║                           
+╚════════════════════╝`, t, translated)
 
 		replyMessage(client, v, msg)
 	} else {
-		errMsg := `╔═══════════════════════════╗
-║   ❌ TRANSLATION FAILED    ║
-╠═══════════════════════════╣
-║  Could not translate text ║
-║  Please try again         ║
-╚═══════════════════════════╝`
+		errMsg := `╔══════════════════╗
+║ ❌ TRANSLATION FAILED    
+╠══════════════════╣
+║  Could not translate text 
+║  Please try again         
+╚══════════════════╝`
 		replyMessage(client, v, errMsg)
 	}
 }
@@ -419,23 +419,23 @@ func handleVV(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "🫣")
 
 	if v.Message.ExtendedTextMessage == nil {
-		msg := `╔═══════════════════════════╗
-║   ⚠️ VIEWONCE REVEAL       ║
-╠═══════════════════════════╣
-║  Reply to a ViewOnce      ║
-║  message to reveal it     ║
-╚═══════════════════════════╝`
+		msg := `╔════════════════╗
+║ ⚠️ VIEWONCE REVEAL       
+╠════════════════╣
+║  Reply to a ViewOnce      
+║  message to reveal it     
+╚════════════════╝`
 		replyMessage(client, v, msg)
 		return
 	}
 
 	quoted := v.Message.ExtendedTextMessage.GetContextInfo().GetQuotedMessage()
 	if quoted == nil {
-		msg := `╔═══════════════════════════╗
-║   ❌ NO VIEWONCE FOUND     ║
-╠═══════════════════════════╣
-║  Reply to ViewOnce media  ║
-╚═══════════════════════════╝`
+		msg := `╔═══════════════════╗
+║ ❌ NO VIEWONCE FOUND     
+╠═══════════════════╣
+║  Reply to ViewOnce media  
+╚═══════════════════╝`
 		replyMessage(client, v, msg)
 		return
 	}
@@ -448,11 +448,11 @@ func handleVV(client *whatsmeow.Client, v *events.Message) {
 	})
 
 	if err != nil {
-		errMsg := `╔═══════════════════════════╗
-║   ❌ DOWNLOAD FAILED       ║
-╠═══════════════════════════╣
-║  Could not reveal ViewOnce║
-╚═══════════════════════════╝`
+		errMsg := `╔═════════════════╗
+║ ❌ DOWNLOAD FAILED       
+╠════════════════════╣
+║  Could not reveal ViewOnce
+╚════════════════════╝`
 		replyMessage(client, v, errMsg)
 		return
 	}

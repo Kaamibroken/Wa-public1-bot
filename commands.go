@@ -4,14 +4,26 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	waLog "go.mau.fi/whatsmeow/util/log"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"google.golang.org/protobuf/proto"
+)
+
+// ═══════════════════════════════════════════════════════════════
+// 🌐 GLOBAL VARIABLES
+// ═══════════════════════════════════════════════════════════════
+
+var (
+	activeClients = make(map[string]*whatsmeow.Client)
+	clientsMutex  sync.RWMutex
+	startTime     = time.Now()
 )
 
 // ═══════════════════════════════════════════════════════════════
@@ -115,7 +127,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		}
 	}
 
-	// 🔐 PERMISSION CHECK
+	// 🔐 PERMISSION CHECK (UPDATED LID LOGIC)
 	if !canExecute(client, v, cmd) {
 		return
 	}
@@ -212,49 +224,142 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 // 🔐 SECURITY & OWNER LOGIC (LID BASED)
 // ═══════════════════════════════════════════════════════════════
 
+// کلین آئی ڈی نکالنے کا فنکشن - صرف نمبر یا LID
 func getCleanID(jidStr string) string {
-	if jidStr == "" { return "unknown" }
-	parts := strings.Split(jidStr, "@")
-	userPart := parts[0]
-	if strings.Contains(userPart, ":") {
-		userPart = strings.Split(userPart, ":")[0]
+	if jidStr == "" {
+		return "unknown"
 	}
+	
+	// @ کے پہلے والا حصہ نکالیں
+	parts := strings.Split(jidStr, "@")
+	if len(parts) == 0 {
+		return "unknown"
+	}
+	
+	userPart := parts[0]
+	
+	// ڈیوائس آئی ڈی ہٹائیں (جیسے :61 یا .0:1)
+	if strings.Contains(userPart, ":") {
+		colonParts := strings.Split(userPart, ":")
+		userPart = colonParts[0]
+	}
+	
+	// ڈاٹ والا حصہ بھی ہٹائیں
+	if strings.Contains(userPart, ".") {
+		dotParts := strings.Split(userPart, ".")
+		userPart = dotParts[0]
+	}
+	
 	return strings.TrimSpace(userPart)
 }
 
-func isOwner(client *whatsmeow.Client, sender types.JID) bool {
-	if client.Store.ID == nil { return false }
+// بوٹ کی LID نکالنے کا فنکشن
+func getBotLID(client *whatsmeow.Client) string {
+	if client.Store.ID == nil {
+		return "unknown"
+	}
 	
+	// پہلے LID چیک کریں (اگر موجود ہے)
+	if client.Store.LID != nil && client.Store.LID.String() != "" {
+		cleanLID := getCleanID(client.Store.LID.String())
+		fmt.Printf("🔍 [BOT LID] Raw: %s | Clean: %s\n", client.Store.LID.String(), cleanLID)
+		return cleanLID
+	}
+	
+	// اگر LID نہیں ملی تو نارمل ID استعمال کریں
+	cleanID := getCleanID(client.Store.ID.User)
+	fmt.Printf("🔍 [BOT ID] Raw: %s | Clean: %s\n", client.Store.ID.User, cleanID)
+	return cleanID
+}
+
+// اونر چیک کرنے کا بہتر فنکشن
+func isOwner(client *whatsmeow.Client, sender types.JID) bool {
+	if client.Store.ID == nil {
+		fmt.Println("⚠️ [OWNER CHECK] Client Store ID is nil")
+		return false
+	}
+	
+	// سینڈر کا کلین نمبر/آئی ڈی
 	senderClean := getCleanID(sender.String())
+	
+	// بوٹ کا اپنا کلین نمبر (Store.ID.User سے)
 	botNumClean := getCleanID(client.Store.ID.User)
 	
-	botLidClean := ""
-	if client.Store.LID.String() != "" {
-		botLidClean = getCleanID(client.Store.LID.String())
+	// بوٹ کی کلین LID (اگر موجود ہے)
+	botLIDClean := ""
+	if client.Store.LID != nil && client.Store.LID.String() != "" {
+		botLIDClean = getCleanID(client.Store.LID.String())
 	}
-
-	isMatch := (senderClean == botNumClean || (botLidClean != "" && senderClean == botLidClean))
+	
+	// میچنگ لوجک: سینڈر بوٹ کا نمبر ہے یا بوٹ کی LID ہے
+	isMatch := false
+	matchType := "NONE"
+	
+	if senderClean == botNumClean {
+		isMatch = true
+		matchType = "NUMBER"
+	} else if botLIDClean != "" && senderClean == botLIDClean {
+		isMatch = true
+		matchType = "LID"
+	}
+	
+	// تفصیلی لاگ
+	fmt.Printf(`
+╔═══════════════════════════════════╗
+║ 🎯 OWNER VERIFICATION CHECK
+╠═══════════════════════════════════╣
+║ 👤 Sender Clean : %s
+║ 🤖 Bot Number   : %s
+║ 🆔 Bot LID      : %s
+║ 📊 Match Type   : %s
+║ ✅ Is Owner     : %v
+╚═══════════════════════════════════╝
+`, senderClean, botNumClean, botLIDClean, matchType, isMatch)
+	
 	return isMatch
 }
 
+// ایڈمن چیک کرنے کا فنکشن
 func isAdmin(client *whatsmeow.Client, chat, user types.JID) bool {
 	info, err := client.GetGroupInfo(context.Background(), chat)
-	if err != nil { return false }
-	userLID := getCleanID(user.String())
+	if err != nil {
+		return false
+	}
+	
+	userClean := getCleanID(user.String())
+	
 	for _, p := range info.Participants {
-		if getCleanID(p.JID.String()) == userLID && (p.IsAdmin || p.IsSuperAdmin) {
+		participantClean := getCleanID(p.JID.String())
+		if participantClean == userClean && (p.IsAdmin || p.IsSuperAdmin) {
 			return true
 		}
 	}
 	return false
 }
 
+// کمانڈ ایگزیکیوٹ کرنے کی اجازت چیک کریں
 func canExecute(client *whatsmeow.Client, v *events.Message, cmd string) bool {
-	if isOwner(client, v.Info.Sender) { return true }
-	if !v.Info.IsGroup { return true }
+	// اگر اونر ہے تو ہر کمانڈ چلا سکتا ہے
+	if isOwner(client, v.Info.Sender) {
+		return true
+	}
+	
+	// اگر پرائیویٹ چیٹ ہے تو سب کو اجازت ہے
+	if !v.Info.IsGroup {
+		return true
+	}
+	
+	// گروپ سیٹنگز چیک کریں
 	s := getGroupSettings(v.Info.Chat.String())
-	if s.Mode == "private" { return false }
-	if s.Mode == "admin" { return isAdmin(client, v.Info.Chat, v.Info.Sender) }
+	
+	if s.Mode == "private" {
+		return false
+	}
+	
+	if s.Mode == "admin" {
+		return isAdmin(client, v.Info.Chat, v.Info.Sender)
+	}
+	
 	return true
 }
 
@@ -265,20 +370,68 @@ func canExecute(client *whatsmeow.Client, v *events.Message, cmd string) bool {
 func sendOwner(client *whatsmeow.Client, v *events.Message) {
 	isOwn := isOwner(client, v.Info.Sender)
 	status := "❌ NOT Owner"
-	if isOwn { status = "✅ YOU are Owner" }
+	emoji := "🚫"
 	
-	msg := fmt.Sprintf("👑 OWNER CHECK\n\n🤖 Bot Num: %s\n🆔 Bot LID: %s\n👤 Sender: %s\n📊 Status: %s", 
-		getCleanID(client.Store.ID.User), 
-		getCleanID(client.Store.LID.String()), 
-		getCleanID(v.Info.Sender.String()), 
-		status)
+	if isOwn {
+		status = "✅ YOU are Owner"
+		emoji = "👑"
+	}
+	
+	// بوٹ کی تفصیلات
+	botNum := getCleanID(client.Store.ID.User)
+	botLID := "N/A"
+	if client.Store.LID != nil && client.Store.LID.String() != "" {
+		botLID = getCleanID(client.Store.LID.String())
+	}
+	
+	senderClean := getCleanID(v.Info.Sender.String())
+	
+	msg := fmt.Sprintf(`╔═══════════════════════════╗
+║ %s OWNER VERIFICATION
+╠═══════════════════════════╣
+║ 🤖 Bot Number  : %s
+║ 🆔 Bot LID     : %s
+║ 👤 Your ID     : %s
+╠═══════════════════════════╣
+║ 📊 Status: %s
+╠═══════════════════════════╣
+║ 💡 Tip: LID-based security
+║    ensures multi-device
+║    owner recognition!
+╚═══════════════════════════╝`, emoji, botNum, botLID, senderClean, status)
 	
 	replyMessage(client, v, msg)
 }
 
 func sendBotsList(client *whatsmeow.Client, v *events.Message) {
-	replyMessage(client, v, "📊 Multi-Bot System is Active and Synced.")
+	clientsMutex.RLock()
+	count := len(activeClients)
+	
+	msg := fmt.Sprintf(`╔═══════════════════════════╗
+║ 📊 MULTI-BOT STATUS
+╠═══════════════════════════╣
+║ 🤖 Active Bots: %d
+║ 🔄 Auto-Connect: ✅
+║ 🔐 LID Security: ✅
+║ 📡 DB Sync: ✅
+╠═══════════════════════════╣`, count)
+	
+	i := 1
+	for num, _ := range activeClients {
+		msg += fmt.Sprintf("\n║ %d. %s", i, num)
+		i++
+	}
+	
+	clientsMutex.RUnlock()
+	
+	msg += "\n╚═══════════════════════════╝"
+	
+	replyMessage(client, v, msg)
 }
+
+// ═══════════════════════════════════════════════════════════════
+// 📜 MENU SYSTEM
+// ═══════════════════════════════════════════════════════════════
 
 func sendMenu(client *whatsmeow.Client, v *events.Message) {
 	uptime := time.Since(startTime).Round(time.Second)
@@ -295,63 +448,63 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 	menu := fmt.Sprintf(`╔═════════════════╗
 ║   %s   
 ╠═════════════════╣
-║ 👋 Assalam-o-Alaikum     
-║ 👑 Owner: %s             
-║ 🛡️ Mode: %s              
-║ ⏳ Uptime: %s            
+║ 👋 *Assalam-o-Alaikum*     
+║ 👑 *Owner:* %s             
+║ 🛡️ *Mode:* %s              
+║ ⏳ *Uptime:* %s            
 ╠═════════════════╣
 ║                          
 ║  ╭─────── DOWNLOADERS─╮
-║  │ 🔸 %sfb - Facebook   
-║  │ 🔸 %sig - Instagram  
-║  │ 🔸 %spin - Pinterest 
-║  │ 🔸 %stiktok - TikTok 
-║  │ 🔸 %sytmp3 - YT Audio
-║  │ 🔸 %sytmp4 - YT Video 
+║  │ 🔸 *%sfb* - Facebook   
+║  │ 🔸 *%sig* - Instagram  
+║  │ 🔸 *%spin* - Pinterest 
+║  │ 🔸 *%stiktok* - TikTok 
+║  │ 🔸 *%sytmp3* - YT Audio
+║  │ 🔸 *%sytmp4* - YT Video 
 ║  ╰───────────────────╯
 ║                           
 ║  ╭─────── GROUP ──────╮
-║  │ 🔸 %sadd - Add Member
-║  │ 🔸 %sdemote - Demote 
-║  │ 🔸 %sgroup - Settings
-║  │ 🔸 %shidetag - Hidden
-║  │ 🔸 %skick - Remove   
-║  │ 🔸 %spromote - Admin
-║  │ 🔸 %stagall - Mention
+║  │ 🔸 *%sadd* - Add Member
+║  │ 🔸 *%sdemote* - Demote 
+║  │ 🔸 *%sgroup* - Settings
+║  │ 🔸 *%shidetag* - Hidden
+║  │ 🔸 *%skick* - Remove   
+║  │ 🔸 *%spromote* - Admin
+║  │ 🔸 *%stagall* - Mention
 ║  ╰───────────────────╯
 ║                           
 ║  ╭──── SETTINGS ───╮
-║  │ 🔸 %saddstatus       
-║  │ 🔸 %salwaysonline     
-║  │ 🔸 %santilink         
-║  │ 🔸 %santipic         
-║  │ 🔸 %santisticker     
-║  │ 🔸 %santivideo        
-║  │ 🔸 %sautoreact    
-║  │ 🔸 %sautoread      
-║  │ 🔸 %sautostatus   
-║  │ 🔸 %sdelstatus    
-║  │ 🔸 %sliststatus   
-║  │ 🔸 %smode      
-║  │ 🔸 %sowner     
-║  │ 🔸 %sreadallstatus 
-║  │ 🔸 %sstatusreact  
+║  │ 🔸 *%saddstatus*       
+║  │ 🔸 *%salwaysonline*     
+║  │ 🔸 *%santilink*         
+║  │ 🔸 *%santipic*         
+║  │ 🔸 *%santisticker*     
+║  │ 🔸 *%santivideo*        
+║  │ 🔸 *%sautoreact*    
+║  │ 🔸 *%sautoread*      
+║  │ 🔸 *%sautostatus*   
+║  │ 🔸 *%sdelstatus*    
+║  │ 🔸 *%sliststatus*   
+║  │ 🔸 *%smode*      
+║  │ 🔸 *%sowner*     
+║  │ 🔸 *%sreadallstatus* 
+║  │ 🔸 *%sstatusreact*  
 ║  ╰─────────────────╯
 ║                           
 ║  ╭─────── TOOLS ───────╮
-║  │ 🔸 %sdata - DB Status
-║  │ 🔸 %sid - Get ID      
-║  │ 🔸 %slistbots - Bots🆕
-║  │ 🔸 %sping - Speed     
-║  │ 🔸 %sremini - Enhance
-║  │ 🔸 %sremovebg - BG  
-║  │ 🔸 %ssticker - Create 
-║  │ 🔸 %stoimg - Convert 
-║  │ 🔸 %stourl - Upload  
-║  │ 🔸 %stovideo - Make 
-║  │ 🔸 %stranslate - Lang
-║  │ 🔸 %svv - ViewOnce 
-║  │ 🔸 %sweather - Info
+║  │ 🔸 *%sdata* - DB Status
+║  │ 🔸 *%sid* - Get ID      
+║  │ 🔸 *%slistbots* - Bots🆕
+║  │ 🔸 *%sping* - Speed     
+║  │ 🔸 *%sremini* - Enhance
+║  │ 🔸 *%sremovebg* - BG  
+║  │ 🔸 *%ssticker* - Create 
+║  │ 🔸 *%stoimg* - Convert 
+║  │ 🔸 *%stourl* - Upload  
+║  │ 🔸 *%stovideo* - Make 
+║  │ 🔸 *%stranslate* - Lang
+║  │ 🔸 *%svv* - ViewOnce 
+║  │ 🔸 *%sweather* - Info
 ║  ╰────────────────────╯
 ║                          
 ╠═════════════════════╣
@@ -369,6 +522,7 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 
 func sendPing(client *whatsmeow.Client, v *events.Message) {
 	start := time.Now()
+	time.Sleep(10 * time.Millisecond)
 	ms := time.Since(start).Milliseconds()
 	uptime := time.Since(startTime).Round(time.Second)
 
@@ -389,11 +543,26 @@ func sendID(client *whatsmeow.Client, v *events.Message) {
 	user := v.Info.Sender.User
 	chat := v.Info.Chat.User
 	chatType := "Private"
-	if v.Info.IsGroup { chatType = "Group" }
+	if v.Info.IsGroup {
+		chatType = "Group"
+	}
 
-	msg := fmt.Sprintf("🆔 ID INFO\n\n👤 User ID: %s\n👥 Chat ID: %s\n🏷️ Type: %s", user, chat, chatType)
+	msg := fmt.Sprintf(`╔════════════════╗
+║ 🆔 ID INFO
+╠════════════════╣
+║ 👤 User ID:
+║ `+"`%s`"+`
+║ 👥 Chat ID:
+║ `+"`%s`"+`
+║ 🏷️ Type: %s
+╚════════════════╝`, user, chat, chatType)
+
 	sendReplyMessage(client, v, msg)
 }
+
+// ═══════════════════════════════════════════════════════════════
+// 🛠️ HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
 
 func react(client *whatsmeow.Client, chat types.JID, msgID types.MessageID, emoji string) {
 	client.SendMessage(context.Background(), chat, &waProto.Message{
@@ -436,10 +605,18 @@ func sendReplyMessage(client *whatsmeow.Client, v *events.Message, text string) 
 }
 
 func getText(m *waProto.Message) string {
-	if m.Conversation != nil { return *m.Conversation }
-	if m.ExtendedTextMessage != nil && m.ExtendedTextMessage.Text != nil { return *m.ExtendedTextMessage.Text }
-	if m.ImageMessage != nil && m.ImageMessage.Caption != nil { return *m.ImageMessage.Caption }
-	if m.VideoMessage != nil && m.VideoMessage.Caption != nil { return *m.VideoMessage.Caption }
+	if m.Conversation != nil {
+		return *m.Conversation
+	}
+	if m.ExtendedTextMessage != nil && m.ExtendedTextMessage.Text != nil {
+		return *m.ExtendedTextMessage.Text
+	}
+	if m.ImageMessage != nil && m.ImageMessage.Caption != nil {
+		return *m.ImageMessage.Caption
+	}
+	if m.VideoMessage != nil && m.VideoMessage.Caption != nil {
+		return *m.VideoMessage.Caption
+	}
 	return ""
 }
 
@@ -456,12 +633,17 @@ func getGroupSettings(id string) *GroupSettings {
 		Mode:           "public",
 		Antilink:       false,
 		AntilinkAdmin:  true,
+		AntilinkAction: "delete",
+		AntiPic:        false,
+		AntiVideo:      false,
+		AntiSticker:    false,
 		Warnings:       make(map[string]int),
 	}
 
 	cacheMutex.Lock()
 	groupCache[id] = s
 	cacheMutex.Unlock()
+
 	return s
 }
 
@@ -471,26 +653,128 @@ func saveGroupSettings(s *GroupSettings) {
 	cacheMutex.Unlock()
 }
 
-// 🚀 MULTI-BOT SYSTEM (Connects all sessions in Postgres)
-func StartAllBots(container *sqlstore.Container) {
-	devices, err := container.GetAllDevices()
+// ═══════════════════════════════════════════════════════════════
+// 🚀 MULTI-BOT BOOTSTRAP (POSTGRES + AUTO-CONNECT)
+// ═══════════════════════════════════════════════════════════════
+
+// نیا سیشن کنیکٹ کرنے کا فنکشن
+func ConnectNewSession(device *sqlstore.Device) {
+	clientLog := waLog.Stdout("Client", "DEBUG", true)
+	client := whatsmeow.NewClient(device, clientLog)
+	client.AddEventHandler(handler)
+
+	botID := getCleanID(device.ID.User)
+	
+	err := client.Connect()
 	if err != nil {
-		fmt.Printf("❌ سیشن لوڈ کرنے میں غلطی: %v\n", err)
+		fmt.Printf("❌ [MULTI-BOT] نمبر %s کنیکٹ نہیں ہو سکا: %v\n", botID, err)
 		return
 	}
 
-	fmt.Printf("\n📂 [MULTI-BOT] ڈیٹا بیس میں %d سیشن ملے ہیں۔ کنیکٹ کر رہے ہیں...\n", len(devices))
+	// کلائنٹ کو سیو کریں
+	clientsMutex.Lock()
+	activeClients[botID] = client
+	clientsMutex.Unlock()
 
-	for _, device := range devices {
-		clientLog := waLog.Stdout("Client", "DEBUG", true)
-		client := whatsmeow.NewClient(device, clientLog)
-		client.AddEventHandler(handler)
+	fmt.Printf(`
+╔═══════════════════════════════════╗
+║ ✅ BOT CONNECTED SUCCESSFULLY!
+╠═══════════════════════════════════╣
+║ 📱 Number: %s
+║ 🆔 LID: %s
+║ 🕐 Time: %s
+╚═══════════════════════════════════╝
+`, botID, getCleanID(device.LID.String()), time.Now().Format("15:04:05"))
+}
 
-		err = client.Connect()
+// تمام بوٹس کو اسٹارٹ کرنے کا فنکشن
+func StartAllBots(container *sqlstore.Container) {
+	devices, err := container.GetAllDevices()
+	if err != nil {
+		fmt.Printf("❌ [MULTI-BOT] ڈیٹا بیس سے سیشن لوڈ کرنے میں غلطی: %v\n", err)
+		return
+	}
+
+	if len(devices) == 0 {
+		fmt.Println("⚠️ [MULTI-BOT] کوئی سیشن نہیں ملا! نیا سیشن بنائیں۔")
+		return
+	}
+
+	fmt.Printf(`
+╔═══════════════════════════════════╗
+║ 🚀 MULTI-BOT SYSTEM STARTING
+╠═══════════════════════════════════╣
+║ 📂 Found: %d session(s) in DB
+║ 🔄 Connecting all bots...
+╚═══════════════════════════════════╝
+`, len(devices))
+
+	// ہر ڈیوائس کو الگ goroutine میں کنیکٹ کریں
+	var wg sync.WaitGroup
+	for i, device := range devices {
+		wg.Add(1)
+		go func(idx int, dev *sqlstore.Device) {
+			defer wg.Done()
+			
+			fmt.Printf("\n[%d/%d] 🔌 کنیکٹ ہو رہا ہے: %s...\n", idx+1, len(devices), getCleanID(dev.ID.User))
+			ConnectNewSession(dev)
+			
+			// تھوڑا سا وقفہ دیں تاکہ WhatsApp سرور پر زیادہ لوڈ نہ ہو
+			time.Sleep(2 * time.Second)
+		}(i, device)
+	}
+
+	// تمام connections مکمل ہونے کا انتظار کریں
+	wg.Wait()
+
+	clientsMutex.RLock()
+	activeCount := len(activeClients)
+	clientsMutex.RUnlock()
+
+	fmt.Printf(`
+╔═══════════════════════════════════╗
+║ ✅ MULTI-BOT SYSTEM READY!
+╠═══════════════════════════════════╣
+║ 🤖 Active Bots: %d/%d
+║ 🔐 LID Security: Enabled
+║ 📡 Auto-Connect: Active
+║ 💾 Database: PostgreSQL
+╠═══════════════════════════════════╣
+║ 💡 نئے سیشن خودکار طور پر
+║    کنیکٹ ہو جائیں گے!
+╚═══════════════════════════════════╝
+`, activeCount, len(devices))
+
+	// نئے سیشنز کی auto-monitoring شروع کریں
+	go monitorNewSessions(container)
+}
+
+// نئے سیشنز کی نگرانی (Auto-Connect)
+func monitorNewSessions(container *sqlstore.Container) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	fmt.Println("\n🔍 [AUTO-CONNECT] نئے سیشنز کی نگرانی شروع...")
+
+	for range ticker.C {
+		devices, err := container.GetAllDevices()
 		if err != nil {
-			fmt.Printf("❌ نمبر %s کنیکٹ نہ ہو سکا: %v\n", device.ID.User, err)
-		} else {
-			fmt.Printf("✅ بوٹ %s آن لائن ہو گیا ہے!\n", device.ID.User)
+			continue
+		}
+
+		for _, device := range devices {
+			botID := getCleanID(device.ID.User)
+			
+			clientsMutex.RLock()
+			_, exists := activeClients[botID]
+			clientsMutex.RUnlock()
+
+			// اگر یہ سیشن پہلے سے کنیکٹ نہیں ہے تو کنیکٹ کریں
+			if !exists {
+				fmt.Printf("\n🆕 [AUTO-CONNECT] نیا سیشن ملا: %s\n", botID)
+				go ConnectNewSession(device)
+				time.Sleep(3 * time.Second)
+			}
 		}
 	}
 }
