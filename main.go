@@ -14,7 +14,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
-	"go.mau.fi/whatsmeow/store"          // فکسڈ: یہاں store پیکج ایڈ کیا گیا ہے
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -25,24 +25,22 @@ import (
 var client *whatsmeow.Client
 var container *sqlstore.Container
 
-// اس بوٹ کی مخصوص شناخت
-const BOT_TAG = "IMPOSSIBLE_MENU_INSTANCE"
+// بوٹ کی مخصوص شناخت اور ڈویلپر کا نام
+const BOT_TAG = "IMPOSSIBLE_V1"
+const DEVELOPER = "Nothing Is Impossible"
 
 func main() {
-	fmt.Println("🚀 [System] Impossible Bot: Starting Secure Isolation Mode...")
+	fmt.Printf("🚀 [%s] Starting Go Engine...\n", BOT_TAG)
 
 	dbURL := os.Getenv("DATABASE_URL")
 	dbType := "postgres"
 	if dbURL == "" { dbType = "sqlite3"; dbURL = "file:impossible.db?_foreign_keys=on" }
 
-	var err error
-	container, err = sqlstore.New(context.Background(), dbType, dbURL, waLog.Stdout("Database", "INFO", true))
-	if err != nil { panic(err) }
-
-	// سیشن آئسولیشن لاجک (فکسڈ ورژن)
-	var targetDevice *store.Device // فکسڈ: sqlstore.Device کی جگہ store.Device
-	devices, _ := container.GetAllDevices(context.Background())
+	container, _ = sqlstore.New(context.Background(), dbType, dbURL, waLog.Stdout("Database", "INFO", true))
 	
+	// سیشن آئسولیشن لاجک
+	var targetDevice *store.Device
+	devices, _ := container.GetAllDevices(context.Background())
 	for _, dev := range devices {
 		if dev.PushName == BOT_TAG {
 			targetDevice = dev
@@ -51,7 +49,6 @@ func main() {
 	}
 
 	if targetDevice == nil {
-		fmt.Println("ℹ️ [Auth] No dedicated session found for this bot. IDLE MODE.")
 		targetDevice = container.NewDevice()
 		targetDevice.PushName = BOT_TAG
 	}
@@ -59,14 +56,10 @@ func main() {
 	client = whatsmeow.NewClient(targetDevice, waLog.Stdout("Client", "INFO", true))
 	client.AddEventHandler(eventHandler)
 
-	if client.Store.ID != nil {
-		fmt.Printf("✅ [Network] Connecting as: %s\n", client.Store.ID.User)
-		client.Connect()
-	}
+	if client.Store.ID != nil { client.Connect() }
 
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
-	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.StaticFile("/", "./web/index.html")
 	r.POST("/api/pair", handlePairAPI)
@@ -90,46 +83,61 @@ func eventHandler(evt interface{}) {
 	switch v := evt.(type) {
 	case *events.Message:
 		if v.Info.IsFromMe { return }
-		body := strings.TrimSpace(getBody(v.Message))
+		body := strings.TrimSpace(strings.ToLower(getBody(v.Message)))
 		
-		fmt.Printf("📩 [MSG] From: %s | Text: %s\n", v.Info.Sender.User, body)
+		fmt.Printf("📩 [Message] From: %s | Text: %s\n", v.Info.Sender.User, body)
 
-		if strings.ToLower(body) == "#menu" {
-			// ری ایکشن
+		// مینیو کمانڈ
+		if body == "#menu" {
 			_, _ = client.SendMessage(context.Background(), v.Info.Chat, client.BuildReaction(v.Info.Chat, v.Info.Sender, v.Info.ID, "📜"))
-			sendCleanButtonMenu(v.Info.Chat)
+			sendImpossibleMenu(v.Info.Chat)
+		}
+
+		// پنگ کمانڈ (اسپیڈ ٹیسٹ)
+		if body == "#ping" {
+			start := time.Now()
+			_, _ = client.SendMessage(context.Background(), v.Info.Chat, client.BuildReaction(v.Info.Chat, v.Info.Sender, v.Info.ID, "⚡"))
+			latency := time.Since(start)
+			
+			res := fmt.Sprintf("🚀 *Impossible Speed:* %s\n\n_© Developed by %s_", latency.String(), DEVELOPER)
+			client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{Conversation: proto.String(res)})
 		}
 	}
 }
 
-func sendCleanButtonMenu(chat types.JID) {
-	fmt.Println("📤 [Action] Sending Text-Only Button Menu...")
+func sendImpossibleMenu(chat types.JID) {
+	fmt.Println("📤 [Action] Sending Advanced List Menu...")
 
+	// جدید واٹس ایپ بٹن سٹرکچر
 	listMsg := &waProto.ListMessage{
-		Title:       proto.String("IMPOSSIBLE TOOLS"),
-		Description: proto.String("Hi! Select an option below to use our bot's features."),
-		ButtonText:  proto.String("OPEN MENU"),
+		Title:       proto.String("IMPOSSIBLE MENU"),
+		Description: proto.String("Hi! Select an option below to explore bot commands."),
+		ButtonText:  proto.String("OPEN TOOLS"),
 		ListType:    waProto.ListMessage_SINGLE_SELECT.Enum(),
 		Sections: []*waProto.ListMessage_Section{
 			{
-				Title: proto.String("COMMANDS"),
+				Title: proto.String("SYSTEM TOOLS"),
 				Rows: []*waProto.ListMessage_Row{
-					{Title: proto.String("Check Ping"), RowID: proto.String("ping")},
+					{Title: proto.String("Ping Status"), RowID: proto.String("ping"), Description: proto.String("Check latency speed")},
 					{Title: proto.String("My WhatsApp ID"), RowID: proto.String("id")},
 				},
 			},
 		},
 	}
 
+	// بٹن بھیجنے کی کوشش
 	_, err := client.SendMessage(context.Background(), chat, &waProto.Message{
 		ListMessage: listMsg,
 	})
 
+	// اگر بٹن فیل ہو جائیں (Error 479) تو ٹیکسٹ مینیو خودکار طریقے سے جائے گا
 	if err != nil {
-		fmt.Printf("❌ [Error] Button delivery failed. Sending Text Fallback.\n")
-		client.SendMessage(context.Background(), chat, &waProto.Message{
-			Conversation: proto.String("*📜 MENU (Text Mode)*\n\n• #ping\n• #id"),
-		})
+		fmt.Printf("❌ [Error] Buttons failed. Sending backup text menu.\n")
+		backup := fmt.Sprintf("*📜 IMPOSSIBLE MENU*\n\n" +
+			"• #ping - Check Latency\n" +
+			"• #id - Get User ID\n\n" +
+			"_Developed by %s_", DEVELOPER)
+		client.SendMessage(context.Background(), chat, &waProto.Message{Conversation: proto.String(backup)})
 	}
 }
 
@@ -138,8 +146,7 @@ func handlePairAPI(c *gin.Context) {
 	c.BindJSON(&req)
 	num := strings.ReplaceAll(req.Number, "+", "")
 
-	fmt.Printf("🧹 [Cleanup] Wiping specific identity records for: %s\n", num)
-	
+	// سیشن کلین اپ
 	devices, _ := container.GetAllDevices(context.Background())
 	for _, dev := range devices {
 		if dev.PushName == BOT_TAG {
