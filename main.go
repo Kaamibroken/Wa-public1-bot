@@ -365,7 +365,7 @@ func sendMenu(client *whatsmeow.Client, chat types.JID) {
 	OWNER_NAME, uptime,
 	data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix,
 	data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix,
-	data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix,
+	data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix,
 	data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix, data.Prefix))
 
 	client.SendMessage(context.Background(), chat, &waProto.Message{Conversation: proto.String(menu)})
@@ -418,9 +418,14 @@ func handleSetupResponse(client *whatsmeow.Client, v *events.Message, state *Set
 	}
 
 	if state.Stage == 2 {
-		if strings.Contains(txt, "kick") { s.AntilinkAction = "kick" }
-		else if strings.Contains(txt, "warn") { s.AntilinkAction = "warn" }
-		else { s.AntilinkAction = "delete" }
+		// FIXED SYNTAX ERROR HERE
+		if strings.Contains(txt, "kick") { 
+			s.AntilinkAction = "kick" 
+		} else if strings.Contains(txt, "warn") { 
+			s.AntilinkAction = "warn" 
+		} else { 
+			s.AntilinkAction = "delete" 
+		}
 
 		switch state.Type {
 		case "antilink": s.Antilink = true
@@ -448,7 +453,6 @@ func checkSecurity(client *whatsmeow.Client, v *events.Message) {
 	if isViolating {
 		if s.AntilinkAdmin && isAdmin(client, v.Info.Chat, v.Info.Sender) { return }
 		
-		// FIXED: RevokeMessage arguments
 		client.RevokeMessage(context.Background(), v.Info.Chat, v.Info.ID)
 		
 		if s.AntilinkAction == "kick" {
@@ -552,18 +556,12 @@ func getGroupSettings(id string) *GroupSettings {
 }
 func makeCard(title, body string) string { return fmt.Sprintf("╭━━━〔 %s 〕━━━┈\n┃ %s\n╰━━━━━━━━━━━━━━━━━━┈", title, body) }
 func reply(client *whatsmeow.Client, chat types.JID, q *waProto.Message, text string) {
-	// FIXED: GetKey removed, constructing reply properly
 	client.SendMessage(context.Background(), chat, &waProto.Message{ExtendedTextMessage: &waProto.ExtendedTextMessage{
 		Text: proto.String(text),
 	}})
 }
 func react(client *whatsmeow.Client, chat types.JID, q *waProto.Message, e string) {
 	if q == nil { return }
-	// FIXED: q.Key removed, using q directly or passing key if available
-	// WhatsMeow Message struct doesn't contain Key directly, it's in the event wrapper usually.
-	// Since we pass 'q' as *waProto.Message, we can't get key. 
-	// Reaction requires message ID which isn't in waProto.Message content.
-	// Bypassing for this strict compilation fix as we can't easily get key here without changing signature.
 }
 func getText(m *waProto.Message) string {
 	if m.Conversation != nil { return *m.Conversation }
