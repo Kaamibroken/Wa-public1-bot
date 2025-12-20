@@ -35,6 +35,8 @@ RUN go build -ldflags="-s -w" -o bot .
 # ───────────────────────────────────────────────────────────
 # Stage 2: Node.js Builder
 # ───────────────────────────────────────────────────────────
+RUN apk add --no-cache git
+
 FROM node:20-alpine AS node-builder
 
 WORKDIR /app
