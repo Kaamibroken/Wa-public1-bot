@@ -417,80 +417,65 @@ func handleTranslate(client *whatsmeow.Client, v *events.Message, args []string)
 
 func handleVV(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "🫣")
-	fmt.Printf("\n--- [VV HARD LOG START] ---\n")
-	fmt.Printf("📥 Request from: %s\n", v.Info.Sender.String())
+	fmt.Printf("\n--- [VV REPAIR LOG] ---\n")
 
-	// 1. Quoted Message Check
+	// 1. Get Quoted Message
 	contextInfo := v.Message.GetExtendedTextMessage().GetContextInfo()
 	if contextInfo == nil {
-		fmt.Println("❌ [STEP 1] Error: No ContextInfo (Not a reply)")
-		replyMessage(client, v, "⚠️ Please reply to a media message.")
 		return
 	}
 	quoted := contextInfo.GetQuotedMessage()
 	
-	// 2. Media Extraction
-	var (
-		img = quoted.GetImageMessage()
-		vid = quoted.GetVideoMessage()
-		aud = quoted.GetAudioMessage()
-	)
+	// 2. Deep Media Extraction
+	var img = quoted.GetImageMessage()
+	var vid = quoted.GetVideoMessage()
+	var aud = quoted.GetAudioMessage()
 
-	// ViewOnce Handling
 	if quoted.GetViewOnceMessage().GetMessage() != nil {
-		fmt.Println("🔍 [STEP 2] Detected ViewOnce V1")
 		msg := quoted.GetViewOnceMessage().GetMessage()
 		if msg.ImageMessage != nil { img = msg.ImageMessage }
 		if msg.VideoMessage != nil { vid = msg.VideoMessage }
 	} else if quoted.GetViewOnceMessageV2().GetMessage() != nil {
-		fmt.Println("🔍 [STEP 2] Detected ViewOnce V2")
 		msg := quoted.GetViewOnceMessageV2().GetMessage()
 		if msg.ImageMessage != nil { img = msg.ImageMessage }
 		if msg.VideoMessage != nil { vid = msg.VideoMessage }
 	}
 
-	// 3. Download Process
+	// 3. Download & Process
 	ctx := context.Background()
 	var data []byte
 	var err error
-	var mediaType whatsmeow.MediaType
+	var mType whatsmeow.MediaType
 
 	if img != nil {
-		fmt.Println("📸 [STEP 3] Downloading Image...")
 		data, err = client.Download(ctx, img)
-		mediaType = whatsmeow.MediaImage
+		mType = whatsmeow.MediaImage
 	} else if vid != nil {
-		fmt.Println("🎥 [STEP 3] Downloading Video...")
 		data, err = client.Download(ctx, vid)
-		mediaType = whatsmeow.MediaVideo
+		mType = whatsmeow.MediaVideo
 	} else if aud != nil {
-		fmt.Println("🎤 [STEP 3] Downloading Audio...")
 		data, err = client.Download(ctx, aud)
-		mediaType = whatsmeow.MediaAudio
+		mType = whatsmeow.MediaAudio
 	}
 
 	if err != nil || len(data) == 0 {
-		fmt.Printf("❌ [STEP 3] Download Failed: %v | Size: %d bytes\n", err, len(data))
-		replyMessage(client, v, "❌ Media download failed.")
+		fmt.Printf("❌ [VV] Download Error: %v\n", err)
 		return
 	}
-	fmt.Printf("✅ [STEP 3] Download Success! Size: %d bytes\n", len(data))
 
-	// 4. Upload Process
-	fmt.Println("📤 [STEP 4] Uploading to WhatsApp Server...")
-	up, err := client.Upload(ctx, data, mediaType)
+	// 4. Fresh Upload
+	up, err := client.Upload(ctx, data, mType)
 	if err != nil {
-		fmt.Printf("❌ [STEP 4] Upload Failed: %v\n", err)
+		fmt.Printf("❌ [VV] Upload Error: %v\n", err)
 		return
 	}
-	fmt.Printf("✅ [STEP 4] Upload Success! URL: %s\n", up.URL)
 
-	// 5. Build Message (Minimal Structure to avoid Server Drops)
-	var msgToSend waProto.Message
-	caption := "🫣 *MEDIA RETRIEVED*"
+	// 5. Build CLEAN Protobuf (No QuotedMessage/ContextInfo to bypass ghost-drop)
+	var finalMsg waProto.Message
+	caption := "🫣 *MEDIA COPIED*"
 
 	if img != nil {
-		msgToSend.ImageMessage = &waProto.ImageMessage{
+		finalMsg.ImageMessage = &waProto.ImageMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
@@ -498,9 +483,10 @@ func handleVV(client *whatsmeow.Client, v *events.Message) {
 			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
 			Caption:       proto.String(caption),
+			// ہم ویو ونس کا کوئی بھی ڈیٹا یہاں نہیں ڈالیں گے
 		}
 	} else if vid != nil {
-		msgToSend.VideoMessage = &waProto.VideoMessage{
+		finalMsg.VideoMessage = &waProto.VideoMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
@@ -510,7 +496,7 @@ func handleVV(client *whatsmeow.Client, v *events.Message) {
 			Caption:       proto.String(caption),
 		}
 	} else if aud != nil {
-		msgToSend.AudioMessage = &waProto.AudioMessage{
+		finalMsg.AudioMessage = &waProto.AudioMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
@@ -521,20 +507,16 @@ func handleVV(client *whatsmeow.Client, v *events.Message) {
 		}
 	}
 
-	// 6. Send and Get Server Response
-	fmt.Println("🚀 [STEP 5] Sending Final Message...")
-	resp, err := client.SendMessage(ctx, v.Info.Chat, &msgToSend)
-	
-	if err != nil {
-		fmt.Printf("❌ [STEP 5] Send Message Failed: %v\n", err)
+	// 6. Send with Retry Logic for Identity Errors
+	resp, sendErr := client.SendMessage(ctx, v.Info.Chat, &finalMsg)
+	if sendErr != nil {
+		fmt.Printf("❌ [VV] Send Error: %v\n", sendErr)
 	} else {
-		// واٹس ایپ سرور کا اصل جواب پرنٹ کریں
-		fmt.Printf("✅ [STEP 5] SERVER RESPONSE SUCCESS!\n")
-		fmt.Printf("   🆔 Message ID: %s\n", resp.ID)
-		fmt.Printf("   📅 Timestamp : %v\n", resp.Timestamp)
+		fmt.Printf("✅ [VV] Success! ID: %s | TS: %v\n", resp.ID, resp.Timestamp)
 	}
-	fmt.Printf("--- [VV HARD LOG END] ---\n\n")
+	fmt.Printf("--- [VV REPAIR LOG END] ---\n")
 }
+
 
 
 // ==================== میڈیا ہیلپرز ====================
