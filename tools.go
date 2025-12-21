@@ -417,105 +417,137 @@ func handleTranslate(client *whatsmeow.Client, v *events.Message, args []string)
 
 func handleVV(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "🫣")
-	fmt.Printf("\n--- [VV REPAIR LOG] ---\n")
+	fmt.Printf("\n--- [VV FINAL DEBUG START] ---\n")
 
-	// 1. Get Quoted Message
-	contextInfo := v.Message.GetExtendedTextMessage().GetContextInfo()
-	if contextInfo == nil {
+	// 1. Get Context Info
+	cInfo := v.Message.GetExtendedTextMessage().GetContextInfo()
+	if cInfo == nil {
+		fmt.Println("❌ [VV] No ContextInfo found")
+		replyMessage(client, v, "⚠️ Please reply to a media message.")
 		return
 	}
-	quoted := contextInfo.GetQuotedMessage()
-	
-	// 2. Deep Media Extraction
-	var img = quoted.GetImageMessage()
-	var vid = quoted.GetVideoMessage()
-	var aud = quoted.GetAudioMessage()
 
-	if quoted.GetViewOnceMessage().GetMessage() != nil {
-		msg := quoted.GetViewOnceMessage().GetMessage()
-		if msg.ImageMessage != nil { img = msg.ImageMessage }
-		if msg.VideoMessage != nil { vid = msg.VideoMessage }
-	} else if quoted.GetViewOnceMessageV2().GetMessage() != nil {
-		msg := quoted.GetViewOnceMessageV2().GetMessage()
-		if msg.ImageMessage != nil { img = msg.ImageMessage }
-		if msg.VideoMessage != nil { vid = msg.VideoMessage }
+	quoted := cInfo.GetQuotedMessage()
+	if quoted == nil {
+		fmt.Println("❌ [VV] Quoted message is nil")
+		return
 	}
 
-	// 3. Download & Process
-	ctx := context.Background()
-	var data []byte
-	var err error
-	var mType whatsmeow.MediaType
+	// 2. Advanced Media Extraction (Robust Logic)
+	var (
+		imgMsg *waProto.ImageMessage
+		vidMsg *waProto.VideoMessage
+		audMsg *waProto.AudioMessage
+	)
 
-	if img != nil {
-		data, err = client.Download(ctx, img)
+	// Direct check
+	if quoted.ImageMessage != nil {
+		imgMsg = quoted.ImageMessage
+	} else if quoted.VideoMessage != nil {
+		vidMsg = quoted.VideoMessage
+	} else if quoted.AudioMessage != nil {
+		audMsg = quoted.AudioMessage
+	} else {
+		// Nested ViewOnce check (V1 & V2)
+		vo := quoted.GetViewOnceMessage().GetMessage()
+		if vo == nil {
+			vo = quoted.GetViewOnceMessageV2().GetMessage()
+		}
+		if vo != nil {
+			if vo.ImageMessage != nil { imgMsg = vo.ImageMessage }
+			if vo.VideoMessage != nil { vidMsg = vo.VideoMessage }
+		}
+	}
+
+	// 3. Validation Check
+	if imgMsg == nil && vidMsg == nil && audMsg == nil {
+		fmt.Println("❌ [VV] No supported media found in extraction.")
+		replyMessage(client, v, "❌ No image/video/audio found to copy.")
+		return
+	}
+
+	// 4. Download and Upload
+	ctx := context.Background()
+	var (
+		data []byte
+		err  error
+		mType whatsmeow.MediaType
+	)
+
+	if imgMsg != nil {
+		fmt.Println("📸 [VV] Downloading Image...")
+		data, err = client.Download(ctx, imgMsg)
 		mType = whatsmeow.MediaImage
-	} else if vid != nil {
-		data, err = client.Download(ctx, vid)
+	} else if vidMsg != nil {
+		fmt.Println("🎥 [VV] Downloading Video...")
+		data, err = client.Download(ctx, vidMsg)
 		mType = whatsmeow.MediaVideo
-	} else if aud != nil {
-		data, err = client.Download(ctx, aud)
+	} else if audMsg != nil {
+		fmt.Println("🎤 [VV] Downloading Audio...")
+		data, err = client.Download(ctx, audMsg)
 		mType = whatsmeow.MediaAudio
 	}
 
 	if err != nil || len(data) == 0 {
-		fmt.Printf("❌ [VV] Download Error: %v\n", err)
+		fmt.Printf("❌ [VV] Download Failed: %v (Size: %d)\n", err, len(data))
 		return
 	}
 
-	// 4. Fresh Upload
 	up, err := client.Upload(ctx, data, mType)
 	if err != nil {
-		fmt.Printf("❌ [VV] Upload Error: %v\n", err)
+		fmt.Printf("❌ [VV] Upload Failed: %v\n", err)
 		return
 	}
 
-	// 5. Build CLEAN Protobuf (No QuotedMessage/ContextInfo to bypass ghost-drop)
+	// 5. Build Perfect Protobuf (Including FileLength)
 	var finalMsg waProto.Message
-	caption := "🫣 *MEDIA COPIED*"
+	caption := "📂 *RETRIEVED MEDIA*\n\n✅ Successfully copied."
 
-	if img != nil {
+	if imgMsg != nil {
 		finalMsg.ImageMessage = &waProto.ImageMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
 			Mimetype:      proto.String("image/jpeg"),
-			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
+			FileEncSHA256: up.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))), // ✅ لازمی فیلڈ
 			Caption:       proto.String(caption),
-			// ہم ویو ونس کا کوئی بھی ڈیٹا یہاں نہیں ڈالیں گے
 		}
-	} else if vid != nil {
+	} else if vidMsg != nil {
 		finalMsg.VideoMessage = &waProto.VideoMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
 			Mimetype:      proto.String("video/mp4"),
-			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
+			FileEncSHA256: up.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))), // ✅ لازمی فیلڈ
 			Caption:       proto.String(caption),
 		}
-	} else if aud != nil {
+	} else if audMsg != nil {
 		finalMsg.AudioMessage = &waProto.AudioMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
 			Mimetype:      proto.String("audio/ogg; codecs=opus"),
-			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
-			PTT:           proto.Bool(true),
+			FileEncSHA256: up.FileEncSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))), // ✅ لازمی فیلڈ
+			PTT:           proto.Bool(false), // Baileys کی طرح نارمل آڈیو
 		}
 	}
 
-	// 6. Send with Retry Logic for Identity Errors
+	// 6. Final Clean Send
 	resp, sendErr := client.SendMessage(ctx, v.Info.Chat, &finalMsg)
 	if sendErr != nil {
-		fmt.Printf("❌ [VV] Send Error: %v\n", sendErr)
+		fmt.Printf("❌ [VV] Final Send Error: %v\n", sendErr)
 	} else {
-		fmt.Printf("✅ [VV] Success! ID: %s | TS: %v\n", resp.ID, resp.Timestamp)
+		fmt.Printf("🚀 [VV] DONE! Message Sent. ID: %s\n", resp.ID)
 	}
-	fmt.Printf("--- [VV REPAIR LOG END] ---\n")
+	fmt.Printf("--- [VV FINAL DEBUG END] ---\n")
 }
+
 
 
 
