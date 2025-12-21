@@ -46,9 +46,14 @@ var (
 
 // ✅ 1. ریڈیس کنکشن (سائنس دانوں کو حیران کرنے کے لئے)
 func initRedis() {
-	redisURL := os.Getenv("REDIS_URL") // ریلوے کا ویری ایبل
+	redisURL := os.Getenv("REDIS_URL")
+	
 	if redisURL == "" {
-		redisURL = "redis://localhost:6379" // لوکل بیک اپ
+		fmt.Println("⚠️ [REDIS] Warning: REDIS_URL variable is empty! Falling back to localhost...")
+		redisURL = "redis://localhost:6379"
+	} else {
+		// سیکیورٹی کے لئے پاس ورڈ چھپا کر لاگ دکھائیں
+		fmt.Println("📡 [REDIS] Attempting to connect using provided URL...")
 	}
 
 	opt, err := redis.ParseURL(redisURL)
@@ -58,12 +63,12 @@ func initRedis() {
 
 	rdb = redis.NewClient(opt)
 
-	// چیک کریں کہ کیا ریڈیس آن لائن ہے
+	// کنکشن ٹیسٹ کریں
 	_, err = rdb.Ping(ctx).Result()
 	if err != nil {
-		log.Fatalf("❌ Redis connection failed: %v", err)
+		log.Fatalf("❌ Redis connection failed: %v | Make sure your Private URL is correct.", err)
 	}
-	fmt.Println("🚀 [REDIS] Connected Successfully! Zero Latency Mode Active.")
+	fmt.Println("🚀 [REDIS] Atomic connection established! System is now invincible.")
 }
 
 func main() {
