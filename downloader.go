@@ -108,64 +108,108 @@ func handleYTDownloadMenu(client *whatsmeow.Client, v *events.Message, ytUrl str
 // 3. ماسٹر ڈاؤن لوڈر فنکشن (yt-dlp Implementation)
 func handleYTDownload(client *whatsmeow.Client, v *events.Message, ytUrl, format string, isAudio bool) {
 	react(client, v.Info.Chat, v.Info.ID, "⏳")
-	
-	// فائل کا نام یونیک رکھیں تاکہ کنفلکٹ نہ ہو
-	fileName := fmt.Sprintf("dl_%d_%s", os.Getpid(), v.Info.ID)
+	fmt.Printf("\n--- [YT-DOWNLOAD DEBUG START] ---\n")
+	fmt.Printf("🔗 URL: %s\n", ytUrl)
+	fmt.Printf("📊 Format: %s | IsAudio: %v\n", format, isAudio)
+
+	// فائل کا نام یونیک رکھیں
+	fileName := fmt.Sprintf("yt_%s", v.Info.ID)
 	var args []string
 
 	if isAudio {
 		fileName += ".mp3"
-		args = []string{"-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", fileName, ytUrl}
+		fmt.Println("🎵 Processing MP3 extraction...")
+		args = []string{"-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0", "-o", fileName, ytUrl}
 	} else {
 		fileName += ".mp4"
-		// ریزولوشن لاجک
 		res := "360"
 		if format == "2" { res = "720" } else if format == "3" { res = "1080" }
+		fmt.Printf("🎬 Processing MP4 extraction (%sp)...\n", res)
 		args = []string{"-f", fmt.Sprintf("bestvideo[height<=%s]+bestaudio/best[height<=%s]", res, res), "--merge-output-format", "mp4", "-o", fileName, ytUrl}
 	}
 
-	// 🚀 32GB RAM کا فائدہ: لوکل پروسیسنگ
+	// 1. yt-dlp ایگزیکیوشن
 	cmd := exec.Command("yt-dlp", args...)
 	err := cmd.Run()
 	if err != nil {
-		fmt.Printf("❌ [YT-DLP ERR] %v\n", err)
-		replyMessage(client, v, "❌ Failed to process media. Link might be restricted.")
+		fmt.Printf("❌ [YT-DLP ERR] Execution failed: %v\n", err)
+		replyMessage(client, v, "❌ yt-dlp failed to download the video.")
 		return
 	}
+	fmt.Println("✅ [YT-DLP] Download complete.")
 
+	// 2. فائل پڑھنا
 	data, err := os.ReadFile(fileName)
-	if err != nil || len(data) == 0 {
-		replyMessage(client, v, "❌ Error reading downloaded file.")
+	if err != nil {
+		fmt.Printf("❌ [FS ERR] Could not read file: %v\n", err)
+		replyMessage(client, v, "❌ Error reading the processed file.")
 		return
 	}
+	fileSize := uint64(len(data))
+	fmt.Printf("📦 [FILE] Size: %d bytes (%.2f MB)\n", fileSize, float64(fileSize)/(1024*1024))
 
-	// فائل سائز چیک کریں (WhatsApp Limit)
-	if len(data) > 100*1024*1024 { // 100MB
-		replyMessage(client, v, "⚠️ File is too large to send via WhatsApp.")
+	// واٹس ایپ لیمٹ چیک (100MB)
+	if fileSize > 100*1024*1024 {
+		fmt.Println("⚠️ [LIMIT] File too large for WhatsApp")
+		replyMessage(client, v, "⚠️ Video is over 100MB. Try a lower resolution.")
 		os.Remove(fileName)
 		return
 	}
 
+	// 3. واٹس ایپ پر اپ لوڈ
+	ctx := context.Background()
+	mType := whatsmeow.MediaVideo
 	if isAudio {
-		sendDocument(client, v, "", fileName, "audio/mpeg") // آپ کا موجودہ ڈاکومنٹ سینڈر
-	} else {
-		up, err := client.Upload(context.Background(), data, whatsmeow.MediaVideo)
-		if err != nil { return }
-
-		client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
-			VideoMessage: &waProto.VideoMessage{
-				URL:        proto.String(up.URL),
-				DirectPath: proto.String(up.DirectPath),
-				MediaKey:   up.MediaKey,
-				Mimetype:   proto.String("video/mp4"),
-				FileLength: proto.Uint64(uint64(len(data))), // ڈیلیوری فکس
-				Caption:    proto.String("✅ Successfully Downloaded via *Impossible Power*"),
-			},
-		})
+		mType = whatsmeow.MediaDocument // آڈیو کو ڈاکومنٹ کے طور پر بھیجنا بہتر ہے
 	}
-	
-	// صفائی (Cleanup)
+
+	fmt.Println("📤 Uploading to WhatsApp servers...")
+	up, err := client.Upload(ctx, data, mType)
+	if err != nil {
+		fmt.Printf("❌ [WA-UPLOAD ERR] %v\n", err)
+		replyMessage(client, v, "❌ WhatsApp upload failed.")
+		return
+	}
+	fmt.Println("✅ Upload successful.")
+
+	// 4. میسج تیار کرنا اور بھیجنا
+	var finalMsg waProto.Message
+	if isAudio {
+		fmt.Println("🎤 Sending Audio Message...")
+		finalMsg.DocumentMessage = &waProto.DocumentMessage{
+			URL:           proto.String(up.URL),
+			DirectPath:    proto.String(up.DirectPath),
+			MediaKey:      up.MediaKey,
+			Mimetype:      proto.String("audio/mpeg"),
+			FileName:      proto.String(fmt.Sprintf("%s.mp3", fileName)),
+			FileLength:    proto.Uint64(fileSize), // ✅ لازمی فیلڈ
+			FileSHA256:    up.FileSHA256,
+			FileEncSHA256: up.FileEncSHA256,
+		}
+	} else {
+		fmt.Println("🎥 Sending Video Message...")
+		finalMsg.VideoMessage = &waProto.VideoMessage{
+			URL:           proto.String(up.URL),
+			DirectPath:    proto.String(up.DirectPath),
+			MediaKey:      up.MediaKey,
+			Mimetype:      proto.String("video/mp4"),
+			Caption:       proto.String("✅ *YouTube Download Ready*\n\nPowered by *Impossible Power*"),
+			FileLength:    proto.Uint64(fileSize), // ✅ لازمی فیلڈ
+			FileSHA256:    up.FileSHA256,
+			FileEncSHA256: up.FileEncSHA256,
+		}
+	}
+
+	resp, err := client.SendMessage(ctx, v.Info.Chat, &finalMsg)
+	if err != nil {
+		fmt.Printf("❌ [WA-SEND ERR] %v\n", err)
+	} else {
+		fmt.Printf("🚀 [SUCCESS] Message Sent! ID: %s\n", resp.ID)
+	}
+
+	// 5. صفائی (Cleanup)
 	os.Remove(fileName)
+	fmt.Printf("--- [YT-DOWNLOAD DEBUG END] ---\n")
 }
 
 // ==================== ڈاؤن لوڈر سسٹم ====================
