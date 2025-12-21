@@ -32,12 +32,6 @@ type YTState struct {
 }
 
 // نوٹ: اگر TTState کا 'Redeclared' ایرر آئے تو نیچے والی 6 لائنیں ڈیلیٹ کر دیں
-type TTState struct {
-	Title    string
-	PlayURL  string
-	MusicURL string
-	Size     int64
-}
 
 var ytCache = make(map[string][]YTSResult)
 var ytDownloadCache = make(map[string]YTState)
