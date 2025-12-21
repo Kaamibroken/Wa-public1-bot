@@ -29,14 +29,13 @@ var (
 	dbContainer      *sqlstore.Container  // ✅ یہ مسنگ تھا (FIXED)
 	rdb              *redis.Client 
 	ctx              = context.Background()
-	persistentUptime int64                // ✅ یہ مسنگ تھا (FIXED)
-	
+	persistentUptime int64
+    groupCache = make(map[string]*GroupSettings)
+    cacheMutex sync.RWMutex
 	upgrader         = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 	wsClients = make(map[*websocket.Conn]bool)
-
-	// ⚡ الٹرا فاسٹ کیشنگ (صرف یہاں ڈیفائن ہوں گے)
 	botCleanIDCache = make(map[string]string)
 	botPrefixes     = make(map[string]string)
 	prefixMutex     sync.RWMutex
@@ -491,4 +490,67 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"success":true,"message":"Session deleted"}`)
+}
+// 🚀 تمام بوٹس کو اسٹارٹ کرنے والا فنکشن
+func StartAllBots(container *sqlstore.Container) {
+	dbContainer = container
+	devices, err := container.GetAllDevices(context.Background())
+	if err != nil {
+		fmt.Printf("❌ [DB-ERROR] Could not load sessions: %v\n", err)
+		return
+	}
+
+	fmt.Printf("\n🤖 Starting Multi-Bot System (Found %d entries in DB)\n", len(devices))
+	seenNumbers := make(map[string]bool)
+
+	for _, device := range devices {
+		botNum := getCleanID(device.ID.User)
+		if seenNumbers[botNum] { continue }
+		seenNumbers[botNum] = true
+
+		go func(dev *store.Device) {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("❌ Crash prevented for %s: %v\n", botNum, r)
+				}
+			}()
+			ConnectNewSession(dev)
+		}(device)
+		time.Sleep(5 * time.Second)
+	}
+	go monitorNewSessions(container)
+}
+
+// ⏳ اپ ٹائم (Uptime) لوڈ کرنے والا فنکشن
+func loadPersistentUptime() {
+	if rdb != nil {
+		val, err := rdb.Get(ctx, "total_uptime").Int64()
+		if err == nil { persistentUptime = val }
+	}
+	fmt.Println("⏳ [UPTIME] Persistent uptime loaded from Redis")
+}
+
+// ⏱️ اپ ٹائم ٹریکر
+func startPersistentUptimeTracker() {
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for range ticker.C {
+			persistentUptime += 60
+			if rdb != nil {
+				rdb.Set(ctx, "total_uptime", persistentUptime, 0)
+			}
+		}
+	}()
+}
+
+// 👑 گلوبل کلائنٹ سیٹ کرنے والا فنکشن
+func SetGlobalClient(c *whatsmeow.Client) {
+	globalClient = c
+}
+
+// 📂 گروپ سیٹنگز محفوظ کرنے والا فنکشن (جو security.go مانگ رہا ہے)
+func saveGroupSettings(s *GroupSettings) {
+	cacheMutex.Lock()
+	groupCache[s.ChatID] = s
+	cacheMutex.Unlock()
 }
