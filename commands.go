@@ -258,32 +258,16 @@ func getBotLIDFromDB(client *whatsmeow.Client) string {
 
 func isOwner(client *whatsmeow.Client, sender types.JID) bool {
 	if client.Store.ID == nil {
-		fmt.Println("⚠️ [OWNER CHECK] Client Store ID is nil")
 		return false
 	}
 	
 	senderClean := getCleanID(sender.String())
 	botLIDClean := getBotLIDFromDB(client)
 	
-	isMatch := (senderClean == botLIDClean)
-	matchType := "NONE"
-	if isMatch {
-		matchType = "LID_MATCH"
-	}
-	
-	fmt.Printf(`
-╔═════════════════════════╗
-║ 🎯 OWNER VERIFICATION CHECK
-╠═════════════════════════╣
-║ 👤 Sender Clean : %s
-║ 🆔 Bot LID Clean: %s
-║ 📊 Match Type   : %s
-║ ✅ Is Owner     : %v
-╚═══════════════════════════════════╝
-`, senderClean, botLIDClean, matchType, isMatch)
-	
-	return isMatch
+	// صرف خاموشی سے چیک کریں کہ کیا آئی ڈی میچ ہو رہی ہے
+	return (senderClean == botLIDClean)
 }
+
 
 func isAdmin(client *whatsmeow.Client, chat, user types.JID) bool {
 	info, err := client.GetGroupInfo(context.Background(), chat)
@@ -325,17 +309,31 @@ func canExecute(client *whatsmeow.Client, v *events.Message, cmd string) bool {
 }
 
 func sendOwner(client *whatsmeow.Client, v *events.Message) {
-	isOwn := isOwner(client, v.Info.Sender)
+	senderClean := getCleanID(v.Info.Sender.String())
+	botLIDClean := getBotLIDFromDB(client)
+	
+	isMatch := (senderClean == botLIDClean)
 	status := "❌ NOT Owner"
 	emoji := "🚫"
+	matchType := "NONE"
 	
-	if isOwn {
+	if isMatch {
 		status = "✅ YOU are Owner"
 		emoji = "👑"
+		matchType = "LID_MATCH"
 	}
 	
-	botLIDClean := getBotLIDFromDB(client)
-	senderClean := getCleanID(v.Info.Sender.String())
+	// ✅ اب کارڈ صرف یہاں پرنٹ ہوگا جب کوئی کمانڈ دے گا
+	fmt.Printf(`
+╔═════════════════════════╗
+║ 🎯 OWNER COMMAND TRIGGERED
+╠═════════════════════════╣
+║ 👤 Sender Clean : %s
+║ 🆔 Bot LID Clean: %s
+║ 📊 Match Type   : %s
+║ ✅ Is Owner     : %v
+╚═══════════════════════════════════╝
+`, senderClean, botLIDClean, matchType, isMatch)
 	
 	msg := fmt.Sprintf(`╔═══════════════════╗
 ║ %s OWNER VERIFICATION
