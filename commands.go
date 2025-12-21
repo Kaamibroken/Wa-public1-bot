@@ -72,15 +72,20 @@ func isKnownCommand(text string) bool {
 }
 
 func processMessage(client *whatsmeow.Client, v *events.Message) {
+	// 1. بنیادی ویری ایبلز (صرف ایک بار ڈکلیئر کریں)
 	chatID := v.Info.Chat.String()
 	senderID := v.Info.Sender.String()
 	isGroup := v.Info.IsGroup
+	bodyRaw := getText(v.Message)
+	bodyClean := strings.TrimSpace(bodyRaw)
 
+	// 2. سیٹ اپ رسپانس ہینڈلر
 	if state, ok := setupMap[senderID]; ok && state.GroupID == chatID {
 		handleSetupResponse(client, v, state)
 		return
 	}
 
+	// 3. اسٹیٹس براڈکاسٹ (Auto Status View/React)
 	if chatID == "status@broadcast" {
 		dataMutex.RLock()
 		if data.AutoStatus {
@@ -94,6 +99,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		return
 	}
 
+	// 4. آٹو ریڈ اور آٹو ری ایکٹ
 	dataMutex.RLock()
 	if data.AutoRead {
 		client.MarkRead(context.Background(), []types.MessageID{v.Info.ID}, v.Info.Timestamp, v.Info.Chat, v.Info.Sender)
@@ -101,55 +107,24 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 	if data.AutoReact {
 		react(client, v.Info.Chat, v.Info.ID, "❤️")
 	}
+	prefix := data.Prefix
 	dataMutex.RUnlock()
 
+	// 5. گروپ سیکیورٹی چیک
 	if isGroup {
 		checkSecurity(client, v)
 	}
 
-	body := getText(v.Message)
-	dataMutex.RLock()
-	prefix := data.Prefix
-	dataMutex.RUnlock()
+	// 6. 🛠️ انٹرایکٹو آپشنز ہینڈلر (TikTok/YouTube Selection)
+	// یہ حصہ کمانڈز سے پہلے ہونا چاہیے تاکہ '1' یا '2' پکڑا جا سکے
 
-	if !strings.HasPrefix(body, prefix) && !isKnownCommand(body) {
-		return
-	}
-
-	cmd := strings.ToLower(body)
-	args := []string{}
-
-	if strings.HasPrefix(cmd, prefix) {
-		split := strings.Fields(cmd[len(prefix):])
-		if len(split) > 0 {
-			cmd = split[0]
-			args = split[1:]
-		}
-	} else {
-		split := strings.Fields(cmd)
-		if len(split) > 0 {
-			cmd = split[0]
-			args = split[1:]
-		}
-	}
-
-	if !canExecute(client, v, cmd) {
-		return
-	}
-
-	fullArgs := strings.Join(args, " ")
-	fmt.Printf("📩 CMD: %s | User: %s | Chat: %s\n", cmd, v.Info.Sender.User, v.Info.Chat.User)
-	
-// ٹک ٹاک آپشنز ہینڈل کرنا
-	bodyClean := strings.TrimSpace(getText(v.Message))
-	senderID := v.Info.Sender.String()
-
+	// ٹک ٹاک سلیکشن
 	if state, exists := ttCache[senderID]; exists {
 		if bodyClean == "1" {
-			delete(ttCache, senderID) // استعمال کے بعد صاف کریں
+			delete(ttCache, senderID)
 			react(client, v.Info.Chat, v.Info.ID, "🎬")
-			sendVideo(client, v, state.PlayURL, "🎬 *TikTok Video*\n\n✅ Downloaded")
-			return // آگے نہیں بڑھنا
+			sendVideo(client, v, state.PlayURL, "🎬 *TikTok Video*\n\n✅ Quality: High")
+			return
 		} else if bodyClean == "2" {
 			delete(ttCache, senderID)
 			react(client, v.Info.Chat, v.Info.ID, "🎵")
@@ -169,6 +144,63 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		}
 	}
 
+	// یوٹیوب سلیکشن (اگر آپ نے ytCache بنایا ہوا ہے تو یہ کام کرے گا)
+	if results, exists := ytCache[senderID]; exists {
+		var idx int
+		fmt.Sscanf(bodyClean, "%d", &idx)
+		if idx >= 1 && idx <= len(results) {
+			selected := results[idx-1]
+			msg := fmt.Sprintf("🎥 *Selected:* %s\n\n[1] 🎬 Video (MP4)\n[2] 🎵 Audio (MP3)", selected.Title)
+			delete(ytCache, senderID)
+			ytCache[senderID+"_final"] = []YTSResult{{Title: selected.Title, Url: selected.Url}}
+			replyMessage(client, v, msg)
+			return
+		}
+	}
+
+	if finalData, exists := ytCache[senderID+"_final"]; exists {
+		if bodyClean == "1" {
+			delete(ytCache, senderID+"_final")
+			handleYTDownload(client, v, finalData[0].Url, true)
+			return
+		} else if bodyClean == "2" {
+			delete(ytCache, senderID+"_final")
+			handleYTDownload(client, v, finalData[0].Url, false)
+			return
+		}
+	}
+
+	// 7. کمانڈ چیک (Prefix Logic)
+	if !strings.HasPrefix(bodyRaw, prefix) && !isKnownCommand(bodyRaw) {
+		return
+	}
+
+	cmd := strings.ToLower(bodyRaw)
+	args := []string{}
+
+	if strings.HasPrefix(cmd, prefix) {
+		split := strings.Fields(cmd[len(prefix):])
+		if len(split) > 0 {
+			cmd = split[0]
+			args = split[1:]
+		}
+	} else {
+		split := strings.Fields(cmd)
+		if len(split) > 0 {
+			cmd = split[0]
+			args = split[1:]
+		}
+	}
+
+	// 8. پرمیشن چیک
+	if !canExecute(client, v, cmd) {
+		return
+	}
+
+	fullArgs := strings.Join(args, " ")
+	fmt.Printf("📩 CMD: %s | User: %s | Chat: %s\n", cmd, v.Info.Sender.User, v.Info.Chat.User)
+
+	// 9. مین کمانڈ سوئچ (Switch Case)
 	switch cmd {
 	case "menu", "help", "list":
 		react(client, v.Info.Chat, v.Info.ID, "📜")
@@ -186,7 +218,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		react(client, v.Info.Chat, v.Info.ID, "📊")
 		sendBotsList(client, v)
 	case "data":
-		replyMessage(client, v, "╔════════════════╗\n║ 📂 DATA STATUS\n╠════════════════╣\n║ ✅ DB Coming\n╚════════════════╝")
+		replyMessage(client, v, "╔════════════════╗\n║ 📂 DATA STATUS\n╠════════════════╣\n║ ✅ System Active\n╚════════════════╝")
 	case "alwaysonline":
 		toggleAlwaysOnline(client, v)
 	case "autoread":
@@ -251,15 +283,20 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		handleTranslate(client, v, args)
 	case "vv":
 		handleVV(client, v)
-    case "sd":
+	case "sd":
 		handleSessionDelete(client, v, args)
-    case "tiktok", "tt":
-        handleTikTok(client, v, fullArgs)
-    case "fb", "facebook":
-        handleFacebook(client, v, fullArgs)
-    case "insta", "ig":
-        handleInstagram(client, v, fullArgs)
-		
+	case "tiktok", "tt":
+		handleTikTok(client, v, fullArgs)
+	case "fb", "facebook":
+		handleFacebook(client, v, fullArgs)
+	case "insta", "ig":
+		handleInstagram(client, v, fullArgs)
+	case "yts":
+		handleYTS(client, v, fullArgs)
+	case "ytmp4":
+		handleYTDownload(client, v, fullArgs, true)
+	case "ytmp3":
+		handleYTDownload(client, v, fullArgs, false)
 	}
 }
 

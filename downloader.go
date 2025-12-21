@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url" // ✅ یہ مسنگ تھا
+	"strings"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types/events"
