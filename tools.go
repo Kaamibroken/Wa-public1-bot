@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -20,6 +20,7 @@ import (
 )
 
 // ==================== ٹولز سسٹم ====================
+
 func handleSticker(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "🎨")
 	
@@ -31,6 +32,7 @@ func handleSticker(client *whatsmeow.Client, v *events.Message) {
 ╚═════════════════════╝`
 	replyMessage(client, v, msg)
 
+	// Robust Media Extraction
 	data, err := downloadMedia(client, v.Message)
 	if err != nil {
 		errMsg := `╔═════════════════╗
@@ -43,10 +45,18 @@ func handleSticker(client *whatsmeow.Client, v *events.Message) {
 		return
 	}
 
-	ioutil.WriteFile("temp.jpg", data, 0644)
-	exec.Command("ffmpeg", "-y", "-i", "temp.jpg", "-vcodec", "libwebp", "temp.webp").Run()
-	b, _ := ioutil.ReadFile("temp.webp")
-	up, _ := client.Upload(context.Background(), b, whatsmeow.MediaImage)
+	tempIn := fmt.Sprintf("temp_%s.jpg", v.Info.ID)
+	tempOut := fmt.Sprintf("temp_%s.webp", v.Info.ID)
+
+	os.WriteFile(tempIn, data, 0644)
+	exec.Command("ffmpeg", "-y", "-i", tempIn, "-vcodec", "libwebp", "-filter:v", "scale='if(gt(a,1),512,-1)':'if(gt(a,1),-1,512)'", tempOut).Run()
+	
+	b, _ := os.ReadFile(tempOut)
+	up, err := client.Upload(context.Background(), b, whatsmeow.MediaImage)
+	if err != nil {
+		fmt.Printf("❌ [STICKER] Upload failed: %v\n", err)
+		return
+	}
 
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		StickerMessage: &waProto.StickerMessage{
@@ -55,12 +65,13 @@ func handleSticker(client *whatsmeow.Client, v *events.Message) {
 			MediaKey:      up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(b))), // Fixed
 			Mimetype:      proto.String("image/webp"),
 		},
 	})
 
-	os.Remove("temp.jpg")
-	os.Remove("temp.webp")
+	os.Remove(tempIn)
+	os.Remove(tempOut)
 }
 
 func handleToImg(client *whatsmeow.Client, v *events.Message) {
@@ -72,7 +83,7 @@ func handleToImg(client *whatsmeow.Client, v *events.Message) {
 ║ ⏳ Converting to image... 
 ║       Please wait...           
 ╚══════════════════╝`
-	replyMessage(client, v, msg)  // اب msg صحیح ہے
+	replyMessage(client, v, msg)
 
 	data, err := downloadMedia(client, v.Message)
 	if err != nil {
@@ -86,10 +97,17 @@ func handleToImg(client *whatsmeow.Client, v *events.Message) {
 		return
 	}
 
-	ioutil.WriteFile("temp.webp", data, 0644)
-	exec.Command("ffmpeg", "-y", "-i", "temp.webp", "temp.png").Run()
-	b, _ := ioutil.ReadFile("temp.png")
-	up, _ := client.Upload(context.Background(), b, whatsmeow.MediaImage)
+	tempIn := fmt.Sprintf("temp_%s.webp", v.Info.ID)
+	tempOut := fmt.Sprintf("temp_%s.png", v.Info.ID)
+
+	os.WriteFile(tempIn, data, 0644)
+	exec.Command("ffmpeg", "-y", "-i", tempIn, tempOut).Run()
+	
+	b, _ := os.ReadFile(tempOut)
+	up, err := client.Upload(context.Background(), b, whatsmeow.MediaImage)
+	if err != nil {
+		return
+	}
 
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		ImageMessage: &waProto.ImageMessage{
@@ -98,18 +116,14 @@ func handleToImg(client *whatsmeow.Client, v *events.Message) {
 			MediaKey:      up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(b))), // Fixed
 			Mimetype:      proto.String("image/png"),
 			Caption:       proto.String("✅ Converted to Image"),
-			ContextInfo: &waProto.ContextInfo{
-				StanzaID:      proto.String(v.Info.ID),
-				Participant:   proto.String(v.Info.Sender.String()),
-				QuotedMessage: v.Message,
-			},
 		},
 	})
 
-	os.Remove("temp.webp")
-	os.Remove("temp.png")
+	os.Remove(tempIn)
+	os.Remove(tempOut)
 }
 
 func handleToVideo(client *whatsmeow.Client, v *events.Message) {
@@ -135,10 +149,17 @@ func handleToVideo(client *whatsmeow.Client, v *events.Message) {
 		return
 	}
 
-	ioutil.WriteFile("temp.webp", data, 0644)
-	exec.Command("ffmpeg", "-y", "-i", "temp.webp", "temp.mp4").Run()
-	d, _ := ioutil.ReadFile("temp.mp4")
-	up, _ := client.Upload(context.Background(), d, whatsmeow.MediaVideo)
+	tempIn := fmt.Sprintf("temp_%s.webp", v.Info.ID)
+	tempOut := fmt.Sprintf("temp_%s.mp4", v.Info.ID)
+
+	os.WriteFile(tempIn, data, 0644)
+	exec.Command("ffmpeg", "-y", "-i", tempIn, "-pix_fmt", "yuv420p", tempOut).Run()
+	
+	d, _ := os.ReadFile(tempOut)
+	up, err := client.Upload(context.Background(), d, whatsmeow.MediaVideo)
+	if err != nil {
+		return
+	}
 
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		VideoMessage: &waProto.VideoMessage{
@@ -147,18 +168,14 @@ func handleToVideo(client *whatsmeow.Client, v *events.Message) {
 			MediaKey:      up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(d))), // Fixed
 			Mimetype:      proto.String("video/mp4"),
 			Caption:       proto.String("✅ Converted to Video"),
-			ContextInfo: &waProto.ContextInfo{
-				StanzaID:      proto.String(v.Info.ID),
-				Participant:   proto.String(v.Info.Sender.String()),
-				QuotedMessage: v.Message,
-			},
 		},
 	})
 
-	os.Remove("temp.webp")
-	os.Remove("temp.mp4")
+	os.Remove(tempIn)
+	os.Remove(tempOut)
 }
 
 func handleRemoveBG(client *whatsmeow.Client, v *events.Message) {
@@ -187,9 +204,17 @@ func handleRemoveBG(client *whatsmeow.Client, v *events.Message) {
 	u := uploadToCatbox(d)
 	imgURL := "https://bk9.fun/tools/removebg?url=" + u
 
-	r, _ := http.Get(imgURL)
-	imgData, _ := ioutil.ReadAll(r.Body)
-	up, _ := client.Upload(context.Background(), imgData, whatsmeow.MediaImage)
+	r, err := http.Get(imgURL)
+	if err != nil {
+		return
+	}
+	defer r.Body.Close()
+	
+	imgData, _ := io.ReadAll(r.Body)
+	up, err := client.Upload(context.Background(), imgData, whatsmeow.MediaImage)
+	if err != nil {
+		return
+	}
 
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		ImageMessage: &waProto.ImageMessage{
@@ -198,13 +223,9 @@ func handleRemoveBG(client *whatsmeow.Client, v *events.Message) {
 			MediaKey:      up.MediaKey,
 			FileEncSHA256: up.FileEncSHA256,
 			FileSHA256:    up.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(imgData))), // Fixed
 			Mimetype:      proto.String("image/png"),
 			Caption:       proto.String("✂️ Background Removed\n\n✅ Successfully Processed"),
-			ContextInfo: &waProto.ContextInfo{
-				StanzaID:      proto.String(v.Info.ID),
-				Participant:   proto.String(v.Info.Sender.String()),
-				QuotedMessage: v.Message,
-			},
 		},
 	})
 }
@@ -212,62 +233,69 @@ func handleRemoveBG(client *whatsmeow.Client, v *events.Message) {
 func handleRemini(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "✨")
 	
-	msg := `╔═══════════════════╗
-║ ✨ IMAGE ENHANCEMENT     
-╠═══════════════════╣
-║  ⏳ Enhancing image...     
-║       Please wait...           
-╚═══════════════════╝`
-	replyMessage(client, v, msg)
+	// 1. میسج یا رپلائی میں امیج ڈھونڈیں
+	var imgMsg *waProto.ImageMessage
+	if v.Message.ImageMessage != nil {
+		imgMsg = v.Message.ImageMessage
+	} else if v.Message.GetExtendedTextMessage().GetContextInfo() != nil {
+		quoted := v.Message.GetExtendedTextMessage().GetContextInfo().GetQuotedMessage()
+		if quoted != nil && quoted.ImageMessage != nil {
+			imgMsg = quoted.ImageMessage
+		}
+	}
 
-	d, err := downloadMedia(client, v.Message)
-	if err != nil {
-		errMsg := `╔════════════════╗
-║ ❌ NO IMAGE FOUND       
-╠════════════════╣
-║  Reply to an image to     
-║  enhance quality          
-╚════════════════╝`
-		replyMessage(client, v, errMsg)
+	if imgMsg == nil {
+		replyMessage(client, v, "╔═══════════════════╗\n║ ❌ NO IMAGE FOUND    \n╠═══════════════════╣\n║ Please reply to an \n║ image to enhance.  \n╚═══════════════════╝")
 		return
 	}
 
-	u := uploadToCatbox(d)
-	type R struct {
-		Url string `json:"url"`
+	replyMessage(client, v, "╔═══════════════════╗\n║ ✨ IMAGE ENHANCE    \n╠═══════════════════╣\n║ ⏳ Enhancing...    \n║ Please wait a moment\n╚═══════════════════╝")
+
+	ctx := context.Background()
+	data, err := client.Download(ctx, imgMsg)
+	if err != nil {
+		return
 	}
-	var r R
-	getJson("https://remini.mobilz.pw/enhance?url="+u, &r)
+
+	u := uploadToCatbox(data)
+
+	type ReminiResponse struct {
+		Status string `json:"status"`
+		Url    string `json:"url"`
+	}
+	
+	var r ReminiResponse
+	apiUrl := "https://remini.mobilz.pw/enhance?url=" + u
+	getJson(apiUrl, &r)
 
 	if r.Url != "" {
-		resp, _ := http.Get(r.Url)
-		imgData, _ := ioutil.ReadAll(resp.Body)
-		up, _ := client.Upload(context.Background(), imgData, whatsmeow.MediaImage)
+		resp, err := http.Get(r.Url)
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+		
+		enhancedData, _ := io.ReadAll(resp.Body)
+		up, err := client.Upload(ctx, enhancedData, whatsmeow.MediaImage)
+		if err != nil {
+			return
+		}
 
-		client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
+		msgToSend := &waProto.Message{
 			ImageMessage: &waProto.ImageMessage{
 				URL:           proto.String(up.URL),
 				DirectPath:    proto.String(up.DirectPath),
 				MediaKey:      up.MediaKey,
-				FileEncSHA256: up.FileEncSHA256,
-				FileSHA256:    up.FileSHA256,
 				Mimetype:      proto.String("image/jpeg"),
-				Caption:       proto.String("✨ Enhanced Image\n\n✅ Quality Improved"),
-				ContextInfo: &waProto.ContextInfo{
-					StanzaID:      proto.String(v.Info.ID),
-					Participant:   proto.String(v.Info.Sender.String()),
-					QuotedMessage: v.Message,
+				FileSHA256:    up.FileSHA256,
+				FileEncSHA256: up.FileEncSHA256,
+				FileLength:    proto.Uint64(uint64(len(enhancedData))), // Fixed
+				Caption:       proto.String("✨ *IMAGE ENHANCED*\n\n✅ Quality successfully improved!"),
 			},
-			},
-		})
+		}
+		client.SendMessage(ctx, v.Info.Chat, msgToSend)
 	} else {
-		errMsg := `╔═══════════════════╗
-║ ❌ ENHANCEMENT FAILED   
-╠═══════════════════╣
-║  Could not enhance image  
-║       Please try again         
-╚═══════════════════╝`
-		replyMessage(client, v, errMsg)
+		replyMessage(client, v, "╔═══════════════════╗\n║ ❌ FAILED           \n╠═══════════════════╣\n║ API could not     \n║ process the image. \n╚═══════════════════╝")
 	}
 }
 
@@ -299,8 +327,7 @@ func handleToURL(client *whatsmeow.Client, v *events.Message) {
 ║  🔗 MEDIA UPLOADED        
 ╠═════════════════╣
 ║                           
-║  📎 *Direct Link:*        
-║  %s                       
+║  📎 *Direct Link:* ║  %s                       
 ║                           
 ║ ✅ *Successfully Uploaded*
 ║                           
@@ -331,21 +358,16 @@ func handleWeather(client *whatsmeow.Client, v *events.Message, city string) {
 	
 	r, err := http.Get("https://wttr.in/" + city + "?format=%C+%t")
 	if err != nil {
-		errMsg := `╔═══════════════════╗
-║❌ WEATHER FETCH FAILED 
-╠═══════════════════╣
-║   Could not get weather    
-║   Please check city name   
-╚═══════════════════╝`
-		replyMessage(client, v, errMsg)
+		replyMessage(client, v, "❌ Weather fetch failed.")
 		return
 	}
+	defer r.Body.Close()
 
-	d, _ := ioutil.ReadAll(r.Body)
+	d, _ := io.ReadAll(r.Body)
 	weatherInfo := string(d)
 
 	msg := fmt.Sprintf(`╔═══════════════╗
-║ 🌤️ WEATHER INFO          
+║  🌤️ WEATHER INFO          
 ╠═══════════════╣
 ║                           
 ║  📍 *City:* %s            
@@ -361,8 +383,8 @@ func handleTranslate(client *whatsmeow.Client, v *events.Message, args []string)
 
 	t := strings.Join(args, " ")
 	if t == "" {
-		if v.Message.ExtendedTextMessage != nil {
-			q := v.Message.ExtendedTextMessage.GetContextInfo().GetQuotedMessage()
+		if v.Message.GetExtendedTextMessage().GetContextInfo() != nil {
+			q := v.Message.GetExtendedTextMessage().GetContextInfo().GetQuotedMessage()
 			if q != nil {
 				t = q.GetConversation()
 			}
@@ -370,22 +392,16 @@ func handleTranslate(client *whatsmeow.Client, v *events.Message, args []string)
 	}
 
 	if t == "" {
-		msg := `╔══════════════╗
-║   🌍 TRANSLATOR            
-╠══════════════╣
-║                           
-║  Usage:                   
-║  .tr <text>               
-║                           
-║  Or reply to message with:
-║  .tr                      
-║                           
-╚═══════════════════╝`
-		replyMessage(client, v, msg)
+		replyMessage(client, v, "╔══════════════╗\n║   🌍 TRANSLATOR            \n╠══════════════╣\n║  Usage: .tr <text>  \n╚═══════════════════╝")
 		return
 	}
 
-	r, _ := http.Get(fmt.Sprintf("https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ur&dt=t&q=%s", url.QueryEscape(t)))
+	r, err := http.Get(fmt.Sprintf("https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ur&dt=t&q=%s", url.QueryEscape(t)))
+	if err != nil {
+		return
+	}
+	defer r.Body.Close()
+
 	var res []interface{}
 	json.NewDecoder(r.Body).Decode(&res)
 
@@ -395,52 +411,34 @@ func handleTranslate(client *whatsmeow.Client, v *events.Message, args []string)
 ║ 🌍 TRANSLATION RESULT    
 ╠═══════════════════╣
 ║                           
-║  📝 *Original:*           
-║  %s                       
+║  📝 *Original:* ║  %s                       
 ║                           
-║  📝 *Translated:*         
-║  %s                       
+║  📝 *Translated:* ║  %s                       
 ║                           
 ╚════════════════════╝`, t, translated)
-
 		replyMessage(client, v, msg)
-	} else {
-		errMsg := `╔══════════════════╗
-║ ❌ TRANSLATION FAILED    
-╠══════════════════╣
-║  Could not translate text 
-║  Please try again         
-╚══════════════════╝`
-		replyMessage(client, v, errMsg)
 	}
 }
 
 func handleVV(client *whatsmeow.Client, v *events.Message) {
 	react(client, v.Info.Chat, v.Info.ID, "🫣")
-	fmt.Printf("\n--- [VV FINAL DEBUG START] ---\n")
 
-	// 1. Get Context Info
 	cInfo := v.Message.GetExtendedTextMessage().GetContextInfo()
 	if cInfo == nil {
-		fmt.Println("❌ [VV] No ContextInfo found")
-		replyMessage(client, v, "⚠️ Please reply to a media message.")
+		replyMessage(client, v, "⚠️ Please reply to a ViewOnce media.")
 		return
 	}
 
 	quoted := cInfo.GetQuotedMessage()
-	if quoted == nil {
-		fmt.Println("❌ [VV] Quoted message is nil")
-		return
-	}
+	if quoted == nil { return }
 
-	// 2. Advanced Media Extraction (Robust Logic)
 	var (
 		imgMsg *waProto.ImageMessage
 		vidMsg *waProto.VideoMessage
 		audMsg *waProto.AudioMessage
 	)
 
-	// Direct check
+	// Direct check and ViewOnce extraction
 	if quoted.ImageMessage != nil {
 		imgMsg = quoted.ImageMessage
 	} else if quoted.VideoMessage != nil {
@@ -448,132 +446,101 @@ func handleVV(client *whatsmeow.Client, v *events.Message) {
 	} else if quoted.AudioMessage != nil {
 		audMsg = quoted.AudioMessage
 	} else {
-		// Nested ViewOnce check (V1 & V2)
 		vo := quoted.GetViewOnceMessage().GetMessage()
-		if vo == nil {
-			vo = quoted.GetViewOnceMessageV2().GetMessage()
-		}
+		if vo == nil { vo = quoted.GetViewOnceMessageV2().GetMessage() }
 		if vo != nil {
 			if vo.ImageMessage != nil { imgMsg = vo.ImageMessage }
 			if vo.VideoMessage != nil { vidMsg = vo.VideoMessage }
 		}
 	}
 
-	// 3. Validation Check
 	if imgMsg == nil && vidMsg == nil && audMsg == nil {
-		fmt.Println("❌ [VV] No supported media found in extraction.")
-		replyMessage(client, v, "❌ No image/video/audio found to copy.")
+		replyMessage(client, v, "❌ No copyable media found.")
 		return
 	}
 
-	// 4. Download and Upload
 	ctx := context.Background()
-	var (
-		data []byte
-		err  error
-		mType whatsmeow.MediaType
-	)
+	var data []byte
+	var err error
+	var mType whatsmeow.MediaType
 
 	if imgMsg != nil {
-		fmt.Println("📸 [VV] Downloading Image...")
 		data, err = client.Download(ctx, imgMsg)
 		mType = whatsmeow.MediaImage
 	} else if vidMsg != nil {
-		fmt.Println("🎥 [VV] Downloading Video...")
 		data, err = client.Download(ctx, vidMsg)
 		mType = whatsmeow.MediaVideo
 	} else if audMsg != nil {
-		fmt.Println("🎤 [VV] Downloading Audio...")
 		data, err = client.Download(ctx, audMsg)
 		mType = whatsmeow.MediaAudio
 	}
 
-	if err != nil || len(data) == 0 {
-		fmt.Printf("❌ [VV] Download Failed: %v (Size: %d)\n", err, len(data))
-		return
-	}
+	if err != nil || len(data) == 0 { return }
 
 	up, err := client.Upload(ctx, data, mType)
-	if err != nil {
-		fmt.Printf("❌ [VV] Upload Failed: %v\n", err)
-		return
-	}
+	if err != nil { return }
 
-	// 5. Build Perfect Protobuf (Including FileLength)
 	var finalMsg waProto.Message
-	caption := "📂 *RETRIEVED MEDIA*\n\n✅ Successfully copied."
+	cap := "📂 *RETRIEVED MEDIA*"
 
 	if imgMsg != nil {
 		finalMsg.ImageMessage = &waProto.ImageMessage{
-			URL:           proto.String(up.URL),
-			DirectPath:    proto.String(up.DirectPath),
-			MediaKey:      up.MediaKey,
-			Mimetype:      proto.String("image/jpeg"),
-			FileSHA256:    up.FileSHA256,
-			FileEncSHA256: up.FileEncSHA256,
-			FileLength:    proto.Uint64(uint64(len(data))), // ✅ لازمی فیلڈ
-			Caption:       proto.String(caption),
+			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath),
+			MediaKey: up.MediaKey, Mimetype: proto.String("image/jpeg"),
+			FileSHA256: up.FileSHA256, FileEncSHA256: up.FileEncSHA256,
+			FileLength: proto.Uint64(uint64(len(data))), Caption: proto.String(cap),
 		}
 	} else if vidMsg != nil {
 		finalMsg.VideoMessage = &waProto.VideoMessage{
-			URL:           proto.String(up.URL),
-			DirectPath:    proto.String(up.DirectPath),
-			MediaKey:      up.MediaKey,
-			Mimetype:      proto.String("video/mp4"),
-			FileSHA256:    up.FileSHA256,
-			FileEncSHA256: up.FileEncSHA256,
-			FileLength:    proto.Uint64(uint64(len(data))), // ✅ لازمی فیلڈ
-			Caption:       proto.String(caption),
+			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath),
+			MediaKey: up.MediaKey, Mimetype: proto.String("video/mp4"),
+			FileSHA256: up.FileSHA256, FileEncSHA256: up.FileEncSHA256,
+			FileLength: proto.Uint64(uint64(len(data))), Caption: proto.String(cap),
 		}
 	} else if audMsg != nil {
 		finalMsg.AudioMessage = &waProto.AudioMessage{
-			URL:           proto.String(up.URL),
-			DirectPath:    proto.String(up.DirectPath),
-			MediaKey:      up.MediaKey,
-			Mimetype:      proto.String("audio/ogg; codecs=opus"),
-			FileSHA256:    up.FileSHA256,
-			FileEncSHA256: up.FileEncSHA256,
-			FileLength:    proto.Uint64(uint64(len(data))), // ✅ لازمی فیلڈ
-			PTT:           proto.Bool(false), // Baileys کی طرح نارمل آڈیو
+			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath),
+			MediaKey: up.MediaKey, Mimetype: proto.String("audio/ogg; codecs=opus"),
+			FileSHA256: up.FileSHA256, FileEncSHA256: up.FileEncSHA256,
+			FileLength: proto.Uint64(uint64(len(data))), PTT: proto.Bool(false),
 		}
 	}
 
-	// 6. Final Clean Send
-	resp, sendErr := client.SendMessage(ctx, v.Info.Chat, &finalMsg)
-	if sendErr != nil {
-		fmt.Printf("❌ [VV] Final Send Error: %v\n", sendErr)
-	} else {
-		fmt.Printf("🚀 [VV] DONE! Message Sent. ID: %s\n", resp.ID)
-	}
-	fmt.Printf("--- [VV FINAL DEBUG END] ---\n")
+	client.SendMessage(ctx, v.Info.Chat, &finalMsg)
 }
 
-
-
-
 // ==================== میڈیا ہیلپرز ====================
+
 func downloadMedia(client *whatsmeow.Client, m *waProto.Message) ([]byte, error) {
 	var d whatsmeow.DownloadableMessage
+	
+	// 1. Direct message check
 	if m.ImageMessage != nil {
 		d = m.ImageMessage
 	} else if m.VideoMessage != nil {
 		d = m.VideoMessage
-	} else if m.DocumentMessage != nil {
-		d = m.DocumentMessage
 	} else if m.StickerMessage != nil {
 		d = m.StickerMessage
-	} else if m.ExtendedTextMessage != nil && m.ExtendedTextMessage.ContextInfo != nil {
-		q := m.ExtendedTextMessage.ContextInfo.QuotedMessage
+	} else if m.AudioMessage != nil {
+		d = m.AudioMessage
+	} else if m.GetExtendedTextMessage().GetContextInfo() != nil {
+		// 2. Quoted message check
+		q := m.GetExtendedTextMessage().GetContextInfo().GetQuotedMessage()
 		if q != nil {
-			if q.ImageMessage != nil {
-				d = q.ImageMessage
-			} else if q.VideoMessage != nil {
-				d = q.VideoMessage
-			} else if q.StickerMessage != nil {
-				d = q.StickerMessage
+			if q.ImageMessage != nil { d = q.ImageMessage
+			} else if q.VideoMessage != nil { d = q.VideoMessage
+			} else if q.StickerMessage != nil { d = q.StickerMessage
+			} else if q.AudioMessage != nil { d = q.AudioMessage
+			} else if q.GetViewOnceMessage().GetMessage() != nil {
+				vo := q.GetViewOnceMessage().GetMessage()
+				if vo.ImageMessage != nil { d = vo.ImageMessage } else if vo.VideoMessage != nil { d = vo.VideoMessage }
+			} else if q.GetViewOnceMessageV2().GetMessage() != nil {
+				vo := q.GetViewOnceMessageV2().GetMessage()
+				if vo.ImageMessage != nil { d = vo.ImageMessage } else if vo.VideoMessage != nil { d = vo.VideoMessage }
 			}
 		}
 	}
+
 	if d == nil {
 		return nil, fmt.Errorf("no media")
 	}
@@ -587,7 +554,9 @@ func uploadToCatbox(d []byte) string {
 	p.Write(d)
 	w.WriteField("reqtype", "fileupload")
 	w.Close()
-	r, _ := http.Post("https://catbox.moe/user/api.php", w.FormDataContentType(), b)
-	res, _ := ioutil.ReadAll(r.Body)
+	r, err := http.Post("https://catbox.moe/user/api.php", w.FormDataContentType(), b)
+	if err != nil { return "" }
+	defer r.Body.Close()
+	res, _ := io.ReadAll(r.Body)
 	return string(res)
 }
