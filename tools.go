@@ -416,175 +416,93 @@ func handleTranslate(client *whatsmeow.Client, v *events.Message, args []string)
 }
 
 func handleVV(client *whatsmeow.Client, v *events.Message) {
-	// 1. React to show the bot received the command
 	react(client, v.Info.Chat, v.Info.ID, "🫣")
-	fmt.Printf("\n[VV-COMMAND] Processing request from: %s\n", v.Info.Sender.String())
 
-	// 2. Check if it's a reply
 	if v.Message.GetExtendedTextMessage().GetContextInfo() == nil {
-		fmt.Println("❌ [VV-ERROR] Not a reply message.")
-		msg := `╔═══════════════════╗
-║   ⚠️  VIEW ONCE     
-╠═══════════════════╣
-║ Reply to a media   
-║ message to copy it 
-╚═══════════════════╝`
-		replyMessage(client, v, msg)
+		replyMessage(client, v, "⚠️ Please reply to a View Once media.")
 		return
 	}
 
-	// 3. Extract Quoted Message
 	quoted := v.Message.GetExtendedTextMessage().GetContextInfo().GetQuotedMessage()
 	if quoted == nil {
-		fmt.Println("❌ [VV-ERROR] Quoted message is nil.")
-		msg := `╔═══════════════════╗
-║  ❌ NOT FOUND       
-╠═══════════════════╣
-║ Could not find the  
-║ original message    
-╚═══════════════════╝`
-		replyMessage(client, v, msg)
+		replyMessage(client, v, "❌ Media not found.")
 		return
 	}
 
-	// 4. Resolve Media (Deep Extraction)
-	var (
-		img   = quoted.GetImageMessage()
-		vid   = quoted.GetVideoMessage()
-		aud   = quoted.GetAudioMessage()
-		isV1  = quoted.GetViewOnceMessage().GetMessage()
-		isV2  = quoted.GetViewOnceMessageV2().GetMessage()
-	)
-
-	// Check inside ViewOnce wrappers
-	if isV1 != nil {
-		fmt.Println("🔍 [VV-INFO] Detected ViewOnce V1 wrapper.")
-		if isV1.ImageMessage != nil { img = isV1.ImageMessage }
-		if isV1.VideoMessage != nil { vid = isV1.VideoMessage }
-	} else if isV2 != nil {
-		fmt.Println("🔍 [VV-INFO] Detected ViewOnce V2 wrapper.")
-		if isV2.ImageMessage != nil { img = isV2.ImageMessage }
-		if isV2.VideoMessage != nil { vid = isV2.VideoMessage }
+	// Media extraction
+	var img = quoted.GetImageMessage()
+	var vid = quoted.GetVideoMessage()
+	var aud = quoted.GetAudioMessage()
+	
+	if quoted.GetViewOnceMessage().GetMessage() != nil {
+		msg := quoted.GetViewOnceMessage().GetMessage()
+		if msg.ImageMessage != nil { img = msg.ImageMessage }
+		if msg.VideoMessage != nil { vid = msg.VideoMessage }
+	} else if quoted.GetViewOnceMessageV2().GetMessage() != nil {
+		msg := quoted.GetViewOnceMessageV2().GetMessage()
+		if msg.ImageMessage != nil { img = msg.ImageMessage }
+		if msg.VideoMessage != nil { vid = msg.VideoMessage }
 	}
 
-	// 5. Processing and Printing Logic
-	var (
-		data []byte
-		err  error
-		msgToSend = &waProto.Message{}
-		ctx = context.Background()
-		caption = "🫣 *MEDIA RETRIEVED*\n\n✅ Successfully copied the message"
-	)
+	ctx := context.Background()
+	var data []byte
+	var err error
+	var msgToSend *waProto.Message
 
+	// Download & Send Process
 	if img != nil {
-		fmt.Println("📸 [VV-PROCESS] Attempting to download Image...")
 		data, err = client.Download(ctx, img)
-		if err != nil {
-			fmt.Printf("❌ [VV-DOWNLOAD-ERR] Image download failed: %v\n", err)
-		} else {
-			fmt.Println("✅ [VV-SUCCESS] Image downloaded. Uploading to WA...")
-			up, uploadErr := client.Upload(ctx, data, whatsmeow.MediaImage)
-			if uploadErr != nil {
-				fmt.Printf("❌ [VV-UPLOAD-ERR] Image upload failed: %v\n", uploadErr)
-				err = uploadErr
-			} else {
-				msgToSend.ImageMessage = &waProto.ImageMessage{
-					URL:           proto.String(up.URL),
-					DirectPath:    proto.String(up.DirectPath),
-					MediaKey:      up.MediaKey,
-					Mimetype:      proto.String("image/jpeg"),
-					FileEncSHA256: up.FileEncSHA256,
-					FileSHA256:    up.FileSHA256,
-					Caption:       proto.String(caption),
-					ContextInfo: &waProto.ContextInfo{
-						StanzaID:      proto.String(v.Info.ID),
-						Participant:   proto.String(v.Info.Sender.String()),
-						QuotedMessage: v.Message,
-					},
-				}
-			}
+		if err == nil {
+			up, _ := client.Upload(ctx, data, whatsmeow.MediaImage)
+			msgToSend = &waProto.Message{ImageMessage: &waProto.ImageMessage{
+				URL:        proto.String(up.URL),
+				DirectPath: proto.String(up.DirectPath),
+				MediaKey:   up.MediaKey,
+				Mimetype:   proto.String("image/jpeg"),
+				Caption:    proto.String("🫣 Media Copied"),
+			}}
 		}
 	} else if vid != nil {
-		fmt.Println("🎥 [VV-PROCESS] Attempting to download Video...")
 		data, err = client.Download(ctx, vid)
-		if err != nil {
-			fmt.Printf("❌ [VV-DOWNLOAD-ERR] Video download failed: %v\n", err)
-		} else {
-			fmt.Println("✅ [VV-SUCCESS] Video downloaded. Uploading to WA...")
-			up, uploadErr := client.Upload(ctx, data, whatsmeow.MediaVideo)
-			if uploadErr != nil {
-				fmt.Printf("❌ [VV-UPLOAD-ERR] Video upload failed: %v\n", uploadErr)
-				err = uploadErr
-			} else {
-				msgToSend.VideoMessage = &waProto.VideoMessage{
-					URL:           proto.String(up.URL),
-					DirectPath:    proto.String(up.DirectPath),
-					MediaKey:      up.MediaKey,
-					Mimetype:      proto.String("video/mp4"),
-					FileEncSHA256: up.FileEncSHA256,
-					FileSHA256:    up.FileSHA256,
-					Caption:       proto.String(caption),
-					ContextInfo: &waProto.ContextInfo{
-						StanzaID:      proto.String(v.Info.ID),
-						Participant:   proto.String(v.Info.Sender.String()),
-						QuotedMessage: v.Message,
-					},
-				}
-			}
+		if err == nil {
+			up, _ := client.Upload(ctx, data, whatsmeow.MediaVideo)
+			msgToSend = &waProto.Message{VideoMessage: &waProto.VideoMessage{
+				URL:        proto.String(up.URL),
+				DirectPath: proto.String(up.DirectPath),
+				MediaKey:   up.MediaKey,
+				Mimetype:   proto.String("video/mp4"),
+				Caption:    proto.String("🫣 Media Copied"),
+			}}
 		}
 	} else if aud != nil {
-		fmt.Println("🎤 [VV-PROCESS] Attempting to download Audio/Voice...")
 		data, err = client.Download(ctx, aud)
-		if err != nil {
-			fmt.Printf("❌ [VV-DOWNLOAD-ERR] Audio download failed: %v\n", err)
-		} else {
-			fmt.Println("✅ [VV-SUCCESS] Audio downloaded. Uploading to WA...")
-			up, uploadErr := client.Upload(ctx, data, whatsmeow.MediaAudio)
-			if uploadErr != nil {
-				fmt.Printf("❌ [VV-UPLOAD-ERR] Audio upload failed: %v\n", uploadErr)
-				err = uploadErr
-			} else {
-				msgToSend.AudioMessage = &waProto.AudioMessage{
-					URL:           proto.String(up.URL),
-					DirectPath:    proto.String(up.DirectPath),
-					MediaKey:      up.MediaKey,
-					Mimetype:      proto.String("audio/ogg; codecs=opus"),
-					FileEncSHA256: up.FileEncSHA256,
-					FileSHA256:    up.FileSHA256,
-					PTT:           proto.Bool(true), // Fixed to PTT
-					ContextInfo: &waProto.ContextInfo{
-						StanzaID:      proto.String(v.Info.ID),
-						Participant:   proto.String(v.Info.Sender.String()),
-						QuotedMessage: v.Message,
-					},
-				}
-			}
+		if err == nil {
+			up, _ := client.Upload(ctx, data, whatsmeow.MediaAudio)
+			msgToSend = &waProto.Message{AudioMessage: &waProto.AudioMessage{
+				URL:        proto.String(up.URL),
+				DirectPath: proto.String(up.DirectPath),
+				MediaKey:   up.MediaKey,
+				Mimetype:   proto.String("audio/ogg; codecs=opus"),
+				PTT:        proto.Bool(true),
+			}}
 		}
-	} else {
-		fmt.Println("⚠️ [VV-WARN] No supported media found in quoted message.")
 	}
 
-	// 6. Final Execution Check
-	if err != nil || (msgToSend.ImageMessage == nil && msgToSend.VideoMessage == nil && msgToSend.AudioMessage == nil) {
-		fmt.Printf("❌ [VV-FAIL] Could not send media. Err: %v\n", err)
-		msg := `╔═══════════════════╗
-║  ❌ ERROR FAILED    
-╠═══════════════════╣
-║ Could not download 
-║ or upload media    
-╚═══════════════════╝`
-		replyMessage(client, v, msg)
+	if err != nil || msgToSend == nil {
+		fmt.Printf("❌ [VV-FAIL] Error: %v\n", err)
+		replyMessage(client, v, "❌ Failed to retrieve media. Message might be expired.")
 		return
 	}
 
-	// Send the message
-	_, sendErr := client.SendMessage(ctx, v.Info.Chat, msgToSend)
-	if sendErr != nil {
-		fmt.Printf("❌ [VV-SEND-ERR] Final message failed to send: %v\n", sendErr)
-	} else {
-		fmt.Println("🚀 [VV-DONE] Media successfully sent to user!")
+	// ✅ اہم تبدیلی: ہم رپلائی (QuotedMessage) کو ہٹا رہے ہیں تاکہ میسج ڈراپ نہ ہو
+	msgToSend.GetImageMessage().ContextInfo = &waProto.ContextInfo{
+		StanzaID:    proto.String(v.Info.ID),
+		Participant: proto.String(v.Info.Sender.String()),
 	}
+
+	client.SendMessage(ctx, v.Info.Chat, msgToSend)
 }
+
 
 
 
