@@ -91,7 +91,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 
 	// 2. سیٹ اپ رسپانس ہینڈلر
 	if isSetup {
-		handleSetupResponse(client, v, setupMap[senderID])
+		handleSetupResponse(client, v)
 		return
 	}
 
