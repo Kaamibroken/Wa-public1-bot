@@ -362,7 +362,7 @@ func onResponse(client *whatsmeow.Client, v *events.Message, choice string) {
 	}
 
 	// 3. کیا ریپلائی اسی بوٹ کے میسج کو کیا گیا ہے؟
-	quotedID := v.Message.ExtendedTextMessage.ContextInfo.GetStanzaId()
+	quotedID := v.Message.ExtendedTextMessage.ContextInfo.GetStanzaID() // ✅ Fixed: ID caps mein
 	if quotedID != state.BotMsgID {
 		return // اگر کسی اور کے میسج کو ریپلائی کیا تو اگنور کریں
 	}
@@ -454,18 +454,18 @@ func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType str
 }
 
 func handleSetupResponse(client *whatsmeow.Client, v *events.Message, state *SetupState) {
-	// 1. چیک کریں کہ وہی یوزر ہے
 	if v.Info.Sender.String() != state.User {
 		return
 	}
 
-	// 2. ✅ ریپلائی ویریفیکیشن: کیا بوٹ کے اسی میسج کو ریپلائی کیا گیا ہے؟
+	// ✅ یہاں 'GetStanzaID' (بڑا D) استعمال کیا گیا ہے
 	extMsg := v.Message.GetExtendedTextMessage()
-	if extMsg == nil || extMsg.ContextInfo == nil || extMsg.ContextInfo.GetStanzaId() != state.BotMsgID {
-		return // اگر ریپلائی نہیں ہے یا کسی اور میسج پر ہے تو خاموش رہے
+	if extMsg == nil || extMsg.ContextInfo == nil || extMsg.ContextInfo.GetStanzaID() != state.BotMsgID {
+		return 
 	}
 
 	txt := strings.TrimSpace(getText(v.Message))
+    // باقی کوڈ وہی رہے گا...
 	// یہاں سے آپ کی اپنی لاجک شروع...
 	s := getGroupSettings(state.GroupID)
 
