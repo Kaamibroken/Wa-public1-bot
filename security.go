@@ -349,46 +349,48 @@ func takeSecurityAction(client *whatsmeow.Client, v *events.Message, s *GroupSet
 	}
 }
 // مثال کے طور پر
-func onResponse(v *events.Message, choice string) {
-    // 1. پہلے یوزر کی آئی ڈی نکالیں
-    senderID := v.Info.Sender.String()
+func onResponse(client *whatsmeow.Client, v *events.Message, choice string) {
+	senderID := v.Info.Sender.String()
+	state, exists := setupMap[senderID]
 
-    // 2. چیک کریں کہ کیا یہ یوزر سیٹ اپ موڈ میں ہے؟
-    state, exists := setupMap[senderID]
-    if !exists {
-        return // اگر یوزر سیٹ اپ میں نہیں ہے تو کچھ نہ کرے
-    }
+	// 1. کیا یہ بندہ سیٹ اپ موڈ میں ہے؟
+	if !exists { return }
 
-    // 3. ریڈیس کے لیے کی (Key) تیار کریں
-    // اس میں بوٹ کی LID، گروپ آئی ڈی اور ٹائپ (AntiLink وغیرہ) شامل ہے
-    key := fmt.Sprintf("sec:%s:%s:%s", state.BotLID, state.GroupID, state.Type)
+	// 2. کیا اس نے میسج کو ریپلائی (Quote) کیا ہے؟
+	if v.Message.GetExtendedTextMessage().GetContextInfo() == nil {
+		return // اگر ریپلائی نہیں ہے تو خاموش رہے
+	}
 
-    // 4. ریڈیس میں سیو کریں (ctx کی جگہ براہ راست context.Background استعمال کیا ہے تاکہ ایرر نہ آئے)
-    err := rdb.Set(context.Background(), key, choice, 0).Err()
-    
-    if err != nil {
-        fmt.Println("❌ [REDIS] Error saving response:", err)
-    } else {
-        fmt.Printf("✅ [SECURITY] %s set to %s for group %s\n", state.Type, choice, state.GroupID)
-    }
+	// 3. کیا ریپلائی اسی بوٹ کے میسج کو کیا گیا ہے؟
+	quotedID := v.Message.ExtendedTextMessage.ContextInfo.GetStanzaId()
+	if quotedID != state.BotMsgID {
+		return // اگر کسی اور کے میسج کو ریپلائی کیا تو اگنور کریں
+	}
 
-    // 5. سیٹ اپ مکمل ہونے کے بعد یوزر کو میپ سے نکال دیں
-    delete(setupMap, senderID)
+	// 4. اگر سب ٹھیک ہے تو ریڈیس میں سیو کریں
+	key := fmt.Sprintf("group:sec:%s:%s:%s", state.BotLID, state.GroupID, state.Type)
+	rdb.Set(context.Background(), key, choice, 0)
+
+	// اگلا مینیو دکھائیں یا ختم کریں
+	replyMessage(client, v, "✅ Setting Saved Successfully!")
+	delete(setupMap, senderID)
 }
 
 func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType string) {
-	// 1️⃣ صرف گروپ میں چلے گا
 	if !v.Info.IsGroup {
-		replyMessage(client, v, "╔════════════════╗\n║ ❌ GROUP ONLY\n╚════════════════╝")
+		msg := `╔════════════════╗
+║ ❌ GROUP ONLY
+╠════════════════╣
+║ Works in groups
+╚════════════════╝`
+		replyMessage(client, v, msg)
 		return
 	}
 
-	// 2️⃣ ایڈمن چیک لاجک (Admin Only Check)
 	isAdmin := false
 	groupInfo, err := client.GetGroupInfo(context.Background(), v.Info.Chat)
 	if err == nil {
 		for _, participant := range groupInfo.Participants {
-			// اگر بندہ ایڈمن یا سپر ایڈمن ہے
 			if participant.JID.User == v.Info.Sender.User && (participant.IsAdmin || participant.IsSuperAdmin) {
 				isAdmin = true
 				break
@@ -396,39 +398,27 @@ func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType str
 		}
 	}
 	
-	// اگر بندہ اونر ہے تو اسے بھی اجازت دیں (صرف اضافی سیکیورٹی کے لیے)
 	if !isAdmin && isOwner(client, v.Info.Sender) {
 		isAdmin = true
 	}
 
 	if !isAdmin {
-		replyMessage(client, v, "╔════════════════╗\n║ 👮 ADMIN ONLY\n╠════════════════╣\n║ ❌ YOU ARE NOT\n║ AN ADMIN\n╚════════════════╝")
+		msg := `╔════════════════╗
+║ 👮 ADMIN ONLY
+╠════════════════╣
+║ ❌ YOU ARE NOT
+║ AN ADMIN
+╚════════════════╝`
+		replyMessage(client, v, msg)
 		return
 	}
 
-	// 3️⃣ بوٹ کی اپنی LID حاصل کریں (تاکہ ریڈیس میں ڈیٹا مکس نہ ہو)
 	botLID := getBotLIDFromDB(client)
 	senderStr := v.Info.Sender.String()
 	groupID := v.Info.Chat.String()
-
-	// 4️⃣ عارضی میپ میں مکمل ڈیٹا محفوظ کریں
-	setupMap[senderStr] = &SetupState{
-		Type:    secType, // یہاں Antilink, Anti-Video, Anti-Picture کچھ بھی ہو سکتا ہے
-		Stage:   1,
-		GroupID: groupID,
-		User:    senderStr,
-		BotLID:  botLID,
-	}
-
-	// آٹو کلین اپ (2 منٹ بعد خود ہی میموری سے غائب)
-	go func() {
-		time.Sleep(2 * time.Minute)
-		delete(setupMap, senderStr)
-	}()
-
-	// 5️⃣ پریمیم مینیو رسپانس
 	title := strings.ToUpper(secType)
-	msg := fmt.Sprintf(`╔════════════════╗
+
+	msgText := fmt.Sprintf(`╔════════════════╗
 ║ 🛡️ %s (1/2)
 ╠════════════════╣
 ║ 📍 Group: %s
@@ -441,16 +431,42 @@ func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType str
 ║ ⏱️ Timeout: 2 min
 ╚════════════════╝`, title, groupID[:10]+"...")
 
-	replyMessage(client, v, msg)
+	// ✅ میسج بھیجنا اور اس کی ID محفوظ کرنا
+	resp, _ := client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
+		ExtendedTextMessage: &waProto.ExtendedTextMessage{
+			Text: proto.String(msgText),
+		},
+	})
+
+	setupMap[senderStr] = &SetupState{
+		Type:     secType,
+		Stage:    1,
+		GroupID:  groupID,
+		User:     senderStr,
+		BotLID:   botLID,
+		BotMsgID: resp.ID, // یہاں آئی ڈی سیو ہوگئی
+	}
+
+	go func() {
+		time.Sleep(2 * time.Minute)
+		delete(setupMap, senderStr)
+	}()
 }
 
 func handleSetupResponse(client *whatsmeow.Client, v *events.Message, state *SetupState) {
-	// ✅ ONLY respond to the same user who started setup
+	// 1. چیک کریں کہ وہی یوزر ہے
 	if v.Info.Sender.String() != state.User {
 		return
 	}
 
+	// 2. ✅ ریپلائی ویریفیکیشن: کیا بوٹ کے اسی میسج کو ریپلائی کیا گیا ہے؟
+	extMsg := v.Message.GetExtendedTextMessage()
+	if extMsg == nil || extMsg.ContextInfo == nil || extMsg.ContextInfo.GetStanzaId() != state.BotMsgID {
+		return // اگر ریپلائی نہیں ہے یا کسی اور میسج پر ہے تو خاموش رہے
+	}
+
 	txt := strings.TrimSpace(getText(v.Message))
+	// یہاں سے آپ کی اپنی لاجک شروع...
 	s := getGroupSettings(state.GroupID)
 
 	if state.Stage == 1 {
@@ -459,17 +475,12 @@ func handleSetupResponse(client *whatsmeow.Client, v *events.Message, state *Set
 		} else if txt == "2" {
 			s.AntilinkAdmin = false
 		} else {
-			msg := `╔════════════════╗
-║ ❌ INVALID
-╠════════════════╣
-║ Reply: 1 or 2
-╚════════════════╝`
-			replyMessage(client, v, msg)
+			replyMessage(client, v, "╔════════════════╗\n║ ❌ INVALID\n╠════════════════╣\n║ Reply: 1 or 2\n╚════════════════╝")
 			return
 		}
+		
 		state.Stage = 2
-
-		msg := fmt.Sprintf(`╔════════════════╗
+		nextMsg := fmt.Sprintf(`╔════════════════╗
 ║ ⚡ %s (2/2)
 ╠════════════════╣
 ║ Choose Action:
@@ -478,11 +489,18 @@ func handleSetupResponse(client *whatsmeow.Client, v *events.Message, state *Set
 ║ 3️⃣ DELETE + WARN
 ╚════════════════╝`, strings.ToUpper(state.Type))
 
-		replyMessage(client, v, msg)
+		// ✅ اگلے اسٹیج کے لئے بھی میسج آئی ڈی اپڈیٹ کریں
+		resp, _ := client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
+			ExtendedTextMessage: &waProto.ExtendedTextMessage{
+				Text: proto.String(nextMsg),
+			},
+		})
+		state.BotMsgID = resp.ID 
 		return
 	}
 
 	if state.Stage == 2 {
+		// وہی آپ کی پرانی لاجک (Action Handling)...
 		var actionText string
 		switch txt {
 		case "1":
@@ -495,47 +513,33 @@ func handleSetupResponse(client *whatsmeow.Client, v *events.Message, state *Set
 			s.AntilinkAction = "deletewarn"
 			actionText = "Delete + Warn"
 		default:
-			msg := `╔════════════════╗
-║ ❌ INVALID
-╠════════════════╣
-║ Reply: 1, 2, 3
-╚════════════════╝`
-			replyMessage(client, v, msg)
+			replyMessage(client, v, "╔════════════════╗\n║ ❌ INVALID\n╠════════════════╣\n║ Reply: 1, 2, 3\n╚════════════════╝")
 			return
 		}
 
+		// فیچر آن کرنا اور سیو کرنا
 		switch state.Type {
-		case "antilink":
-			s.Antilink = true
-		case "antipic":
-			s.AntiPic = true
-		case "antivideo":
-			s.AntiVideo = true
-		case "antisticker":
-			s.AntiSticker = true
+		case "antilink": s.Antilink = true
+		case "antipic": s.AntiPic = true
+		case "antivideo": s.AntiVideo = true
+		case "antisticker": s.AntiSticker = true
 		}
 
 		saveGroupSettings(s)
 		delete(setupMap, state.User)
 
 		adminAllow := "YES ✅"
-		if !s.AntilinkAdmin {
-			adminAllow = "NO ❌"
-		}
+		if !s.AntilinkAdmin { adminAllow = "NO ❌" }
 
-		msg := fmt.Sprintf(`╔════════════════╗
+		finalMsg := fmt.Sprintf(`╔════════════════╗
 ║ ✅ %s ENABLED
 ╠════════════════╣
 ║ Feature: %s
 ║ Admin: %s
 ║ Action: %s
-╚════════════════╝`,
-			strings.ToUpper(state.Type),
-			strings.ToUpper(state.Type),
-			adminAllow,
-			actionText)
+╚════════════════╝`, strings.ToUpper(state.Type), strings.ToUpper(state.Type), adminAllow, actionText)
 
-		replyMessage(client, v, msg)
+		replyMessage(client, v, finalMsg)
 	}
 }
 
