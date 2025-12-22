@@ -47,6 +47,7 @@ RUN npm install --production
 FROM python:3.12-slim-bookworm
 
 # ✅ libgomp1 ایڈ کر دی ہے جو ONNX انجن چلانے کے لیے لازمی ہے
+# سسٹم لائبریریز والے حصے میں 'megatools' ایڈ کر دیں
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
@@ -56,6 +57,7 @@ RUN apt-get update && apt-get install -y \
     npm \
     ca-certificates \
     libgomp1 \
+    megatools \
     && rm -rf /var/lib/apt/lists/*
 
 # yt-dlp انسٹالیشن

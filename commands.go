@@ -235,10 +235,12 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		handleDelete(client, v)
 	case "toimg": 
 	    handleToImg(client, v)
+    // 🔍 اپنی commands.go میں یہ حصہ ڈھونڈیں اور بدل دیں
     case "tovideo":
-        handleToMedia(client, v)
+        handleToMedia(client, v, false) // ✅ تیسرا پیرامیٹر 'false' ایڈ کریں (سادہ ویڈیو کے لیے)
+
     case "togif":
-        handleToMedia(client, v)
+        handleToMedia(client, v, true)  // ✅ یہاں 'true' ایڈ کریں (خودکار پلے ہونے والے GIF کے لیے)
     case "s", "sticker": 
         handleToSticker(client, v)
 	case "tourl":
