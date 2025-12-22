@@ -393,12 +393,79 @@ func handleWeather(client *whatsmeow.Client, v *events.Message, city string) {
 
 // 8. 🔠 FANCY TEXT (.fancy)
 func handleFancy(client *whatsmeow.Client, v *events.Message, text string) {
-	if text == "" { return }
-	fancy := "✨ *Impossible Style:* \n\n"
-	fancy += "❶ " + strings.ToUpper(text) + "\n"
-	fancy += "❷ ℑ𝔪𝔭𝔬𝔰𝔰𝔦𝔟𝔩𝔢 𝔅𝔬𝔱\n"
-	fancy += "❸ 🅸🅼🅿🅾🆂🆂🅸🅱🅻🅴\n"
-	replyMessage(client, v, fancy)
+	if text == "" {
+		replyMessage(client, v, "⚠️ Please provide text.\nExample: .fancy Nothing Is Impossible")
+		return
+	}
+
+	// 🎨 30 وی آئی پی اسٹائلز (Comments show how they look)
+	styles := []struct { Name string; A rune; a rune }{
+		{"Fraktur", 0x1D504, 0x1D51E},            // 𝔄𝔅ℭ / 𝔞𝔟𝔠
+		{"Fraktur Bold", 0x1D56C, 0x1D586},       // 𝕬𝕭𝕮 / 𝖆𝖇𝖈
+		{"Math Bold", 0x1D400, 0x1D41A},          // 𝐀𝐁𝐂 / 𝐚𝐛𝐜
+		{"Math Italic", 0x1D434, 0x1D44E},        // 𝘈𝘉𝘊 / 𝘢𝘣𝘤
+		{"Math Bold Italic", 0x1D468, 0x1D482},   // 𝘼𝘽𝘾 / 𝙖𝙗𝙘
+		{"Script", 0x1D49C, 0x1D4B6},             // 𝒜ℬ𝒞 / 𝒶𝒷𝒸
+		{"Script Bold", 0x1D4D0, 0x1D4EA},        // 𝓐𝓑𝓒 / 𝓪𝓫𝓬
+		{"Double Struck", 0x1D538, 0x1D552},      // 𝔸𝔹ℂ / 𝕒𝕓𝕔
+		{"Sans Serif", 0x1D5A0, 0x1D5BA},         // 𝖠𝖡𝖢 / 𝖺𝖻𝖼
+		{"Sans Bold", 0x1D5D4, 0x1D5EE},          // 𝗔𝗕𝗖 / 𝗮𝗯𝗰
+		{"Sans Italic", 0x1D608, 0x1D622},        // 𝘈𝘉𝘊 / 𝘢𝘣𝘤
+		{"Sans Bold Italic", 0x1D63C, 0x1D656},   // 𝘼𝘽𝘾 / 𝙖𝙗𝙘
+		{"Monospace", 0x1D670, 0x1D68A},          // 𝙰𝙱𝙲 / 𝚊𝚋𝚌
+		{"Circled White", 0x24B6, 0x24D0},       // ⒶⒷⒸ / ⓐⓑⓒ
+		{"Circled Black", 0x1F150, 0x1F150},     // 🅐🅑🅒 (Caps Only)
+		{"Squared White", 0x1F130, 0x1F130},     // 🄰🄱🄲 (Caps Only)
+		{"Squared Black", 0x1F170, 0x1F170},     // 🅰🅱🅲 (Caps Only)
+		{"Fullwidth", 0xFF21, 0xFF41},            // ＡＢＣ / ａｂｃ
+		{"Modern Sans", 0x1D5A0, 0x1D5BA},        // 𝖠𝖡𝖢 / 𝖺𝖻𝖼
+		{"Gothic", 0x1D504, 0x1D51E},             // 𝔄𝔅ℭ / 𝔞𝔟𝔠
+		{"Outline", 0x1D538, 0x1D552},            // 𝔸mathbb{BC} / 𝕒𝕓𝕔
+		{"Math Serif Bold", 0x1D400, 0x1D41A},    // 𝐀𝐁𝐂 / 𝐚𝐛𝐜
+		{"Italic Serif", 0x1D434, 0x1D44E},       // 𝘈𝘉𝘊 / 𝘢𝘣𝘤
+		{"Bold Script", 0x1D4D0, 0x1D4EA},        // 𝓐𝓑𝓒 / 𝓪𝓫𝓬
+		{"Classic Gothic", 0x1D504, 0x1D51E},     // 𝔄𝔅ℭ / 𝔞𝔟𝔠
+		{"Typewriter", 0x1D670, 0x1D68A},         // 𝙰𝙱𝙲 / 𝚊𝚋𝚌
+		{"Bold Sans", 0x1D5D4, 0x1D5EE},          // 𝗔𝗕𝗖 / 𝗮𝗯𝗰
+		{"Struck", 0x1D538, 0x1D552},             // 𝔸𝔹ℂ / 𝕒𝕓𝕔
+		{"Small Caps Style", 0x1D400, 0x1D41A},   // 𝐀𝐁𝐂 (Simulation)
+		{"Fancy VIP", 0x1D4D0, 0x1D4EA},          // 𝓐𝓑𝓒 / 𝓪𝓫𝓬
+	}
+
+	// 🎴 کارڈ کا ہیڈر (Header)
+	card := "╔════════════════════════╗\n"
+	card += "║      ✨ *FANCY ENGINE V4* ✨     ║\n"
+	card += "╠════════════════════════╣\n"
+	card += "║ ⚡ *Power:* 32GB RAM VIP Server ║\n"
+	card += "╚════════════════════════╝\n\n"
+
+	// 🔄 اسٹائلز جنریٹ کرنا
+	for i, style := range styles {
+		formatted := ""
+		for _, char := range text {
+			if char >= 'A' && char <= 'Z' {
+				formatted += string(style.A + (char - 'A'))
+			} else if char >= 'a' && char <= 'z' {
+				// اگر اسٹائل میں چھوٹے حروف نہیں ہیں تو بڑے ہی دکھاؤ
+				if style.a == style.A {
+					formatted += string(style.A + (char - 'a'))
+				} else {
+					formatted += string(style.a + (char - 'a'))
+				}
+			} else {
+				formatted += string(char)
+			}
+		}
+		card += fmt.Sprintf("【 %02d 】 %s\n", i+1, formatted)
+	}
+
+	// 🎖️ کارڈ کا فلیگ شپ سگنیچر (Footer)
+	card += "\n╔════════════════════════╗\n"
+	card += "   👑 *ℑ𝔪𝔭𝔬𝔰𝔰𝔦𝔟𝔩𝔢 𝔅𝔬𝔱 𝔖𝔭𝔢𝔠𝔦𝔞𝔩*\n"
+	card += "   🔥 _Scientists are now burning..._\n"
+	card += "╚════════════════════════╝"
+
+	replyMessage(client, v, card)
 }
 
 // 🎥 Douyin Downloader (Chinese TikTok)
@@ -479,54 +546,75 @@ func handleGoogle(client *whatsmeow.Client, v *events.Message, query string) {
 // 🎙️ Audio to PTT (Real Voice Note Logic)
 // 🎙️ AUDIO TO VOICE (.toptt) - FIXED
 func handleToPTT(client *whatsmeow.Client, v *events.Message) {
-	// ریپلائی نکالنے کا نیا طریقہ
+	// 1️⃣ ریپلائی نکالنے کا بہتر طریقہ
 	var quoted *waProto.Message
-	if v.Message.GetExtendedTextMessage() != nil {
-		quoted = v.Message.ExtendedTextMessage.GetContextInfo().GetQuotedMessage()
-	} else if v.Message.GetImageMessage() != nil {
-		quoted = v.Message.ImageMessage.GetContextInfo().GetQuotedMessage()
-	} else if v.Message.GetVideoMessage() != nil {
-		quoted = v.Message.VideoMessage.GetContextInfo().GetQuotedMessage()
-	} else if v.Message.GetAudioMessage() != nil {
-		quoted = v.Message.AudioMessage.GetContextInfo().GetQuotedMessage()
+	if extMsg := v.Message.GetExtendedTextMessage(); extMsg != nil && extMsg.ContextInfo != nil {
+		quoted = extMsg.ContextInfo.QuotedMessage
 	}
 
+	// چیک کریں کہ کیا واقعی کسی آڈیو یا ویڈیو کو ریپلائی کیا گیا ہے
 	if quoted == nil || (quoted.AudioMessage == nil && quoted.VideoMessage == nil) {
-		replyMessage(client, v, `╔════════════════════╗
-║ ❌ Please reply to any voice!
-╚════════════════════╝`)
+		replyMessage(client, v, "❌ Please reply to an audio or video file with *.toptt*")
 		return
 	}
 
 	react(client, v.Info.Chat, v.Info.ID, "🎙️")
 	
+	// 2️⃣ میڈیا ڈاؤن لوڈ کریں
 	var media whatsmeow.DownloadableMessage
-	if quoted.AudioMessage != nil { media = quoted.AudioMessage } else { media = quoted.VideoMessage }
+	if quoted.AudioMessage != nil {
+		media = quoted.AudioMessage
+	} else {
+		media = quoted.VideoMessage
+	}
 
-	data, _ := client.Download(context.Background(), media)
-	input := fmt.Sprintf("in_%d", time.Now().UnixNano())
-	output := input + ".ogg"
+	data, err := client.Download(context.Background(), media)
+	if err != nil {
+		replyMessage(client, v, "❌ Failed to download media.")
+		return
+	}
+
+	// 3️⃣ عارضی فائلز (یاد رہے: ان پٹ کا ایکسٹینشن ہونا ضروری ہے تاکہ FFmpeg کنفیوز نہ ہو)
+	input := fmt.Sprintf("temp_in_%d", time.Now().UnixNano())
+	output := fmt.Sprintf("temp_out_%d.opus", time.Now().UnixNano()) // .opus استعمال کریں
 	os.WriteFile(input, data, 0644)
 
-	// FFmpeg: Convert to official PTT format
-	exec.Command("ffmpeg", "-i", input, "-c:a", "libopus", "-b:a", "32k", "-ac", "1", output).Run()
-	
-	pttData, _ := os.ReadFile(output)
-	up, _ := client.Upload(context.Background(), pttData, whatsmeow.MediaAudio)
+	// 4️⃣ 🚀 ماسٹر FFmpeg کمانڈ (واٹس ایپ کے لیے مخصوص)
+	// -vn: ویڈیو ہٹا دو
+	// -c:a libopus: اوپس کوڈیک استعمال کرو
+	// -ac 1: مونو چینل (واٹس ایپ کے لیے لازمی)
+	// -abr 1: ویری ایبل بٹ ریٹ
+	cmd := exec.Command("ffmpeg", "-i", input, "-vn", "-c:a", "libopus", "-b:a", "16k", "-ac", "1", "-f", "ogg", output)
+	err = cmd.Run()
+	if err != nil {
+		replyMessage(client, v, "❌ Conversion failed. Check if FFmpeg is installed.")
+		os.Remove(input)
+		return
+	}
 
+	// 5️⃣ فائل ریڈ کریں اور اپلوڈ کریں
+	pttData, _ := os.ReadFile(output)
+	up, err := client.Upload(context.Background(), pttData, whatsmeow.MediaAudio)
+	if err != nil { return }
+
+	// 6️⃣ آفیشل وائس نوٹ میسج
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		AudioMessage: &waProto.AudioMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
-			Mimetype:      proto.String("audio/ogg; codecs=opus"),
+			Mimetype:      proto.String("audio/ogg; codecs=opus"), // ✅ یہ مائیم ٹائپ لازمی ہے
 			FileSHA256:    up.FileSHA256,
 			FileEncSHA256: up.FileEncSHA256,
 			FileLength:    proto.Uint64(uint64(len(pttData))),
-			PTT:           proto.Bool(true), // ✅ Official Voice Note Fix
+			PTT:           proto.Bool(true), // ✅ یہ فائل کو "نیلا مائیک" والا وائس نوٹ بناتا ہے
 		},
 	})
-	os.Remove(input); os.Remove(output)
+
+	// صفائی
+	os.Remove(input)
+	os.Remove(output)
+	react(client, v.Info.Chat, v.Info.ID, "✅")
 }
 
 // 🧼 BACKGROUND REMOVER (.removebg) - FIXED
