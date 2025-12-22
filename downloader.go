@@ -79,7 +79,7 @@ func handleTikTokReply(client *whatsmeow.Client, v *events.Message, input string
 }
 
 // 🚀 ہیوی ڈیوٹی میڈیا انجن (The Scientific Power)
-func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode, format string) {
+func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode string, optionalFormat ...string) {
 	react(client, v.Info.Chat, v.Info.ID, "⏳")
 	
 	fileName := fmt.Sprintf("temp_%d", time.Now().UnixNano())
@@ -385,24 +385,20 @@ func handleYTDownloadMenu(client *whatsmeow.Client, v *events.Message, ytUrl str
 func handleYTDownload(client *whatsmeow.Client, v *events.Message, ytUrl, choice string, isAudio bool) {
 	react(client, v.Info.Chat, v.Info.ID, "⏳")
 	
-	// 🎯 فارمیٹ کی سلیکشن
-	format := "bestvideo[height<=720]+bestaudio/best" // Default 720p
 	mode := "video"
+	format := "bestvideo[height<=720]+bestaudio/best"
 
 	if isAudio {
 		mode = "audio"
-		format = "bestaudio/best"
 	} else {
 		switch choice {
-		case "1": format = "bestvideo[height<=360]+bestaudio/best" // 360p
-		case "2": format = "bestvideo[height<=720]+bestaudio/best" // 720p
-		case "3": format = "bestvideo[height<=1080]+bestaudio/best" // 1080p
+		case "1": format = "bestvideo[height<=360]+bestaudio/best"
+		case "2": format = "bestvideo[height<=720]+bestaudio/best"
+		case "3": format = "bestvideo[height<=1080]+bestaudio/best"
 		}
 	}
 
-	fmt.Printf("🚀 Starting YT Download: %s | Mode: %s | Format: %s\n", ytUrl, mode, choice)
-	
-	// آپ کا اصل ڈاؤنلوڈر فنکشن کال ہو رہا ہے
+	// ✅ اب یہ 5 چیزیں بھیجے گا اور بوٹ کریش نہیں ہوگا
 	go downloadAndSend(client, v, ytUrl, mode, format) 
 }
 
