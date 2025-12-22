@@ -83,26 +83,38 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 	react(client, v.Info.Chat, v.Info.ID, "⏳")
 	
 	fileName := fmt.Sprintf("temp_%d", time.Now().UnixNano())
-	var args []string
-
-	if mode == "audio" {
-		fileName += ".mp3"
-		args = []string{"-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", fileName, fullArgs}
-	} else {
-		fileName += ".mp4"
-		args = []string{"-f", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best", "--merge-output-format", "mp4", "-o", fileName, fullArgs}
+	
+	// 🎯 فارمیٹ سیٹ کریں (اگر یوزر نے سلیکٹر سے چنا ہے تو وہ، ورنہ ڈیفالٹ)
+	formatArg := "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+	if len(optionalFormat) > 0 && optionalFormat[0] != "" {
+		formatArg = optionalFormat[0]
 	}
 
-	// 1. سرور پر رینڈرنگ
+	var args []string
+	if mode == "audio" {
+		fileName += ".mp3"
+		// ✅ یہاں 'fullArgs' کو 'ytUrl' سے بدل دیا گیا ہے
+		args = []string{"-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", fileName, ytUrl}
+	} else {
+		fileName += ".mp4"
+		// ✅ یہاں بھی 'ytUrl' استعمال کیا ہے اور یوزر کا منتخب کردہ فارمیٹ بھی
+		args = []string{"-f", formatArg, "--merge-output-format", "mp4", "-o", fileName, ytUrl}
+	}
+
+	// 1. سرور پر ڈاؤن لوڈنگ شروع (The Scientist Mode)
 	cmd := exec.Command("yt-dlp", args...)
 	if err := cmd.Run(); err != nil {
-		replyMessage(client, v, "❌ Media processing failed. The link might be broken or private.")
+		fmt.Printf("❌ yt-dlp error: %v\n", err)
+		replyMessage(client, v, "❌ Media processing failed. The link might be broken or too large.")
 		return
 	}
 
-	// 2. بائٹس میں پڑھنا اور اپلوڈ (The Core Logic)
+	// 2. فائل پڑھنا اور واٹس ایپ پر اپلوڈ کرنا
 	fileData, err := os.ReadFile(fileName)
-	if err != nil { return }
+	if err != nil { 
+		fmt.Printf("❌ File read error: %v\n", err)
+		return 
+	}
 	defer os.Remove(fileName)
 
 	fileSize := uint64(len(fileData))
@@ -111,11 +123,11 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 
 	up, err := client.Upload(context.Background(), fileData, mType)
 	if err != nil {
-		replyMessage(client, v, "❌ WhatsApp upload failed.")
+		replyMessage(client, v, "❌ WhatsApp server rejected the file.")
 		return
 	}
 
-	// 3. پروٹوکول میسج ڈیلیوری
+	// 3. میسج ڈیلیوری (Protocol Delivery)
 	var finalMsg waProto.Message
 	if mode == "audio" {
 		finalMsg.DocumentMessage = &waProto.DocumentMessage{
@@ -126,7 +138,7 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 	} else {
 		finalMsg.VideoMessage = &waProto.VideoMessage{
 			URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
-			Mimetype: proto.String("video/mp4"), Caption: proto.String("✅ *Downloaded Successfully*"),
+			Mimetype: proto.String("video/mp4"), Caption: proto.String("✅ *Impossible Bot - Success*"),
 			FileLength: proto.Uint64(fileSize), FileSHA256: up.FileSHA256, FileEncSHA256: up.FileEncSHA256,
 		}
 	}
@@ -386,7 +398,7 @@ func handleYTDownload(client *whatsmeow.Client, v *events.Message, ytUrl, choice
 	react(client, v.Info.Chat, v.Info.ID, "⏳")
 	
 	mode := "video"
-	format := "bestvideo[height<=720]+bestaudio/best"
+	format := "bestvideo[height<=720]+bestaudio/best" // Default
 
 	if isAudio {
 		mode = "audio"
@@ -398,7 +410,7 @@ func handleYTDownload(client *whatsmeow.Client, v *events.Message, ytUrl, choice
 		}
 	}
 
-	// ✅ اب یہ 5 چیزیں بھیجے گا اور بوٹ کریش نہیں ہوگا
+	// ✅ اب یہ 5 چیزیں بھیجے گا اور بوٹ اسے قبول کر لے گا
 	go downloadAndSend(client, v, ytUrl, mode, format) 
 }
 
