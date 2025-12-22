@@ -19,21 +19,10 @@ import (
 )
 
 // 🛡️ گلوبل اسٹرکچرز
-type YTSResult struct {
-	Title string
-	Url   string
-}
 
-type YTState struct {
-	Url      string
-	Title    string
-	SenderID string
-}
 
 // اگر types.go میں TTState موجود ہے تو اسے یہاں سے ہٹا دیں
 
-var ytCache = make(map[string][]YTSResult)
-var ytDownloadCache = make(map[string]YTState)
 var ttCache = make(map[string]TTState)
 
 // 💎 پریمیم کارڈ میکر (ہیلپر)
