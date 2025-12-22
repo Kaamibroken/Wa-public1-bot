@@ -377,7 +377,7 @@ func onResponse(client *whatsmeow.Client, v *events.Message, choice string) {
 }
 
 func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType string) {
-	// 1️⃣ گروپ اونلی کارڈ (برقرار ہے)
+	// 1️⃣ کارڈ 1: صرف گروپ کے لیے (برقرار ہے)
 	if !v.Info.IsGroup {
 		msg := `╔════════════════╗
 ║ ❌ GROUP ONLY
@@ -388,11 +388,12 @@ func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType str
 		return
 	}
 
-	// 2️⃣ ایڈمن چیک (برقرار ہے)
+	// 2️⃣ کارڈ 2: ایڈمن ویریفیکیشن (برقرار ہے)
 	isAdmin := false
 	groupInfo, err := client.GetGroupInfo(context.Background(), v.Info.Chat)
 	if err == nil {
 		for _, participant := range groupInfo.Participants {
+			// ایڈمن یا سپر ایڈمن چیک
 			if participant.JID.User == v.Info.Sender.User && (participant.IsAdmin || participant.IsSuperAdmin) {
 				isAdmin = true
 				break
@@ -400,7 +401,12 @@ func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType str
 		}
 	}
 	
-	if !isAdmin && !isOwner(client, v.Info.Sender) {
+	// اونر کو بھی اجازت دیں
+	if !isAdmin && isOwner(client, v.Info.Sender) {
+		isAdmin = true
+	}
+
+	if !isAdmin {
 		msg := `╔════════════════╗
 ║ 👮 ADMIN ONLY
 ╠════════════════╣
@@ -411,16 +417,16 @@ func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType str
 		return
 	}
 
-	// ✅ یہاں تبدیلی کی ہے: پرانا ورکنگ فنکشن واپس ڈال دیا ہے
+	// 🛠️ ڈیٹا نکالنا (LID اور آئی ڈیز)
 	botLID := getBotLIDFromDB(client)
 	senderStr := v.Info.Sender.String()
 	groupID := v.Info.Chat.String()
 	title := strings.ToUpper(secType)
 
-	// 🔑 یونیک کی بنائیں
+	// 🔑 یونیک کی (Key) بنانا: یہ "خاموشی" توڑنے کے لیے سب سے اہم ہے
 	mapKey := fmt.Sprintf("%s:%s", botLID, senderStr)
 
-	// 3️⃣ مین سیٹ اپ کارڈ
+	// 3️⃣ کارڈ 3: مین سیٹ اپ مینیو (ڈیزائن وہی پریمیم والا)
 	msgText := fmt.Sprintf(`╔════════════════╗
 ║ 🛡️ %s (1/2)
 ╠════════════════╣
@@ -434,26 +440,29 @@ func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType str
 ║ ⏱️ Timeout: 2 min
 ╚════════════════╝`, title, groupID[:10]+"...")
 
-	// میسج بھیجیں اور ID لیں
+	// میسج بھیجنا اور اس کی آئی ڈی لینا
 	resp, err := client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		ExtendedTextMessage: &waProto.ExtendedTextMessage{
 			Text: proto.String(msgText),
 		},
 	})
 
-	if err != nil { return }
+	if err != nil {
+		fmt.Println("❌ Error sending setup card:", err)
+		return 
+	}
 
-	// ڈیٹا سیو کریں
+	// 💾 یادداشت محفوظ کرنا (State Storage)
 	setupMap[mapKey] = &SetupState{
 		Type:     secType,
 		Stage:    1,
 		GroupID:  groupID,
 		User:     senderStr,
 		BotLID:   botLID,
-		BotMsgID: resp.ID,
+		BotMsgID: resp.ID, // ✅ یہ لائن آئی ڈی ٹریک کرے گی تاکہ خاموشی ختم ہو
 	}
 
-	// آٹو کلین اپ
+	// ⏱️ آٹو کلین اپ (سائنس دانوں کو بتائے بغیر میموری صاف کرنا)
 	go func() {
 		time.Sleep(2 * time.Minute)
 		delete(setupMap, mapKey)
@@ -461,31 +470,50 @@ func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType str
 }
 
 func handleSetupResponse(client *whatsmeow.Client, v *events.Message) {
-	// ✅ یہاں بھی تبدیلی کی ہے: پرانا ورکنگ طریقہ
-	botLID := getBotLIDFromDB(client)
-	senderID := v.Info.Sender.String()
-	mapKey := fmt.Sprintf("%s:%s", botLID, senderID)
-	
-	state, exists := setupMap[mapKey]
-	if !exists { return }
-
-	// 🛑 ریپلائی چیک (صرف بوٹ کے کارڈ پر ریپلائی سنیں)
+	// 1. چیک کریں کہ کیا میسج ریپلائی (Quoted) ہے؟
 	extMsg := v.Message.GetExtendedTextMessage()
-	if extMsg == nil || extMsg.ContextInfo == nil || extMsg.ContextInfo.GetStanzaID() != state.BotMsgID {
+	if extMsg == nil || extMsg.ContextInfo == nil {
+		return
+	}
+
+	// یوزر نے جس میسج کو ریپلائی کیا، اس کی ID نکالیں
+	quotedID := extMsg.ContextInfo.GetStanzaID()
+	senderID := v.Info.Sender.String()
+	
+	var state *SetupState
+	var currentKey string
+
+	// 2. پورے میپ میں ڈھونڈیں کہ یہ ID کس سیشن کی ہے
+	for key, s := range setupMap {
+		if s.BotMsgID == quotedID && s.User == senderID {
+			state = s
+			currentKey = key
+			break
+		}
+	}
+
+	// اگر کوئی میچ نہیں ملا تو خاموش رہے (مطلب یہ ریپلائی بوٹ کے کارڈ پر نہیں ہے)
+	if state == nil {
+		return
+	}
+
+	// 3. اب بوٹ کی اپنی LID چیک کریں تاکہ صرف وہی بوٹ جواب دے جس کا کارڈ تھا
+	botLID := getBotLIDFromDB(client)
+	if state.BotLID != botLID {
 		return 
 	}
 
 	txt := strings.TrimSpace(getText(v.Message))
 	s := getGroupSettings(state.GroupID)
 
-	// --- اسٹیج 1 ---
+	// --- اسٹیج 1: ایڈمن سیٹ اپ ---
 	if state.Stage == 1 {
 		if txt == "1" {
 			s.AntilinkAdmin = true
 		} else if txt == "2" {
 			s.AntilinkAdmin = false
 		} else {
-			replyMessage(client, v, "╔════════════════╗\n║ ❌ INVALID\n╠════════════════╣\n║ Reply: 1 or 2\n╚════════════════╝")
+			replyMessage(client, v, "⚠️ Please reply with 1 or 2")
 			return
 		}
 		
@@ -504,25 +532,24 @@ func handleSetupResponse(client *whatsmeow.Client, v *events.Message) {
 				Text: proto.String(nextMsg),
 			},
 		})
+		
+		// 🔑 آئی ڈی اپڈیٹ کریں تاکہ اگلا ریپلائی ٹریک ہو سکے
 		state.BotMsgID = resp.ID 
 		return
 	}
 
-	// --- اسٹیج 2 ---
+	// --- اسٹیج 2: فائنل ایکشن ---
 	if state.Stage == 2 {
 		var actionText string
 		switch txt {
 		case "1":
-			s.AntilinkAction = "delete"
-			actionText = "Delete Only"
+			s.AntilinkAction = "delete"; actionText = "Delete Only"
 		case "2":
-			s.AntilinkAction = "deletekick"
-			actionText = "Delete + Kick"
+			s.AntilinkAction = "deletekick"; actionText = "Delete + Kick"
 		case "3":
-			s.AntilinkAction = "deletewarn"
-			actionText = "Delete + Warn"
+			s.AntilinkAction = "deletewarn"; actionText = "Delete + Warn"
 		default:
-			replyMessage(client, v, "╔════════════════╗\n║ ❌ INVALID\n╠════════════════╣\n║ Reply: 1, 2, 3\n╚════════════════╝")
+			replyMessage(client, v, "⚠️ Please reply with 1, 2 or 3")
 			return
 		}
 
@@ -534,17 +561,15 @@ func handleSetupResponse(client *whatsmeow.Client, v *events.Message) {
 		}
 
 		saveGroupSettings(s)
-		delete(setupMap, mapKey) // ✅ یہاں بھی ٹھیک کیا ہے
+		delete(setupMap, currentKey) // سیشن ختم
 
 		adminAllow := "YES ✅"; if !s.AntilinkAdmin { adminAllow = "NO ❌" }
-
 		finalMsg := fmt.Sprintf(`╔════════════════╗
 ║ ✅ %s ENABLED
 ╠════════════════╣
-║ Feature: %s
 ║ Admin: %s
 ║ Action: %s
-╚════════════════╝`, strings.ToUpper(state.Type), strings.ToUpper(state.Type), adminAllow, actionText)
+╚════════════════╝`, strings.ToUpper(state.Type), adminAllow, actionText)
 
 		replyMessage(client, v, finalMsg)
 	}
