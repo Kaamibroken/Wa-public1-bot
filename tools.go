@@ -131,39 +131,47 @@ func handleToMedia(client *whatsmeow.Client, v *events.Message, isGif bool) {
 	data, err := client.Download(context.Background(), stickerMsg)
 	if err != nil { return }
 
-	input := fmt.Sprintf("in_%d.webp", time.Now().UnixNano())
-	output := fmt.Sprintf("out_%d.mp4", time.Now().UnixNano())
-	os.WriteFile(input, data, 0644)
+	// فائلز کے نام
+	inputWebP := fmt.Sprintf("in_%d.webp", time.Now().UnixNano())
+	tempGif := fmt.Sprintf("temp_%d.gif", time.Now().UnixNano())
+	outputMp4 := fmt.Sprintf("out_%d.mp4", time.Now().UnixNano())
 
-	// 🚀 FIXED:
-	// 1. '-c:v libwebp' ان پٹ سے پہلے لگایا تاکہ وہ اینیمیشن کو سمجھ سکے۔
-	// 2. '-vsync 0' (deprecated) ہٹا دیا اور 'fps=25' فلٹر میں شامل کیا۔
-	// 3. '-loop 0' ان پٹ سے ہٹا دیا کیونکہ یہ کبھی کبھی ڈیکوڈر کو کنفیوز کرتا ہے۔
-	
+	os.WriteFile(inputWebP, data, 0644)
+
+	// 🛠️ STEP 1: ImageMagick کے ذریعے WebP کو GIF میں تبدیل کریں (Animation بچانے کے لیے)
+	// -coalesce لیئرز کو مکس ہونے سے روکتا ہے
+	cmdConvert := exec.Command("convert", inputWebP, "-coalesce", tempGif)
+	if err := cmdConvert.Run(); err != nil {
+		fmt.Printf("🔥 ImageMagick Error: %v\n", err)
+		replyMessage(client, v, "❌ Failed to parse sticker animation.")
+		os.Remove(inputWebP)
+		return
+	}
+
+	// 🛠️ STEP 2: اب GIF کو FFmpeg کے ذریعے MP4 بنائیں
 	cmd := exec.Command("ffmpeg", "-y",
-		"-c:v", "libwebp",      // Force external decoder for Animation support
-		"-i", input,
-		"-vf", "fps=25,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p", // FPS fix + Even dimensions
+		"-i", tempGif,          // اب ان پٹ GIF ہے
+		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p", // Even dimensions
 		"-c:v", "libx264",
 		"-preset", "faster",
-		"-crf", "26",           // Optimized quality/size balance
+		"-crf", "26",
 		"-movflags", "+faststart",
 		"-pix_fmt", "yuv420p",
-		"-t", "10",             // Max duration safety
-		output)
+		"-t", "10",
+		outputMp4)
 	
 	outLog, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("🔥 Graphics Engine Error: %s\n", string(outLog))
-		replyMessage(client, v, "❌ Graphics Engine failed. Try a different sticker.")
-		os.Remove(input)
+		replyMessage(client, v, "❌ Graphics Engine failed.")
+		os.Remove(inputWebP); os.Remove(tempGif)
 		return
 	}
 
-	finalData, _ := os.ReadFile(output)
+	finalData, _ := os.ReadFile(outputMp4)
 	up, err := client.Upload(context.Background(), finalData, whatsmeow.MediaVideo)
 	if err != nil { 
-		os.Remove(input); os.Remove(output)
+		os.Remove(inputWebP); os.Remove(tempGif); os.Remove(outputMp4)
 		return 
 	}
 
@@ -185,9 +193,15 @@ func handleToMedia(client *whatsmeow.Client, v *events.Message, isGif bool) {
 	}
 
 	client.SendMessage(context.Background(), v.Info.Chat, msg)
-	os.Remove(input); os.Remove(output)
+	
+	// سب ڈیلیٹ کریں
+	os.Remove(inputWebP)
+	os.Remove(tempGif)
+	os.Remove(outputMp4)
+	
 	react(client, v.Info.Chat, v.Info.ID, "✅")
 }
+
 
 
 func handleToURL(client *whatsmeow.Client, v *events.Message) {
