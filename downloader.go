@@ -169,30 +169,28 @@ func sendAudio(client *whatsmeow.Client, v *events.Message, audioURL string) {
 	}
 	defer resp.Body.Close()
 
-	// 🛠️ یہاں 'err' پہلے بن چکا ہے، اس لیے ہم صرف 'data' کو نیا بنا رہے ہیں
-	data, err := io.ReadAll(resp.Body) 
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}
 
 	// 2️⃣ واٹس ایپ پر اپلوڈ کرنا
-	// ⚡ یہاں پکا فکس: اگر لائن 202 پر ایرر ہے، تو ہم 'up' کو الگ سے ہینڈل کریں گے
 	up, err := client.Upload(context.Background(), data, whatsmeow.MediaAudio)
 	if err != nil {
 		return
 	}
 
-	// 3️⃣ وائس نوٹ بھیجنا
+	// 3️⃣ اوریجنل آڈیو بھیجنا (بطور میوزک فائل)
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		AudioMessage: &waProto.AudioMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
-			Mimetype:      proto.String("audio/ogg; codecs=opus"),
+			Mimetype:      proto.String("audio/mpeg"), // ✅ میوزک فارمیٹ
 			FileSHA256:    up.FileSHA256,
 			FileEncSHA256: up.FileEncSHA256,
 			FileLength:    proto.Uint64(uint64(len(data))),
-			PTT:           proto.Bool(true), // وی آئی پی وائس نوٹ لک
+			PTT:           proto.Bool(false), // ❌ وائس نوٹ (PTT) بند کر دیا
 		},
 	})
 }
