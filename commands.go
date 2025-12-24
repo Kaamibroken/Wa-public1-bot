@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
+    "net/http"
+	"github.com/showwin/speedtest-go/speedtest"
+    "go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -686,21 +688,54 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 }
 
 func sendPing(client *whatsmeow.Client, v *events.Message) {
+    // 1. Notify user that test is starting (optional, because speedtest takes time)
+    // sendReplyMessage(client, v, "⏳ Testing Network Speed... Please wait.") 
+
+	// --- 1. Real Latency Test (Ping) ---
 	start := time.Now()
-	time.Sleep(10 * time.Millisecond)
-	ms := time.Since(start).Milliseconds()
-	uptimeStr := getFormattedUptime()
-	msg := fmt.Sprintf(`╔════════════════╗
-║ ⚡ PING STATUS
-╠════════════════╣
-║ 🚀 Speed: %d MS
-║ ⏱️ Uptime: %s
-║ 👑 Dev: %s
-╠═════════════════════╣
-║      🟢 System Running
-╚═════════════════════╝`, ms, uptimeStr, OWNER_NAME)
+    // Google ko hit kar ke wapis anay ka time note karega
+	_, err := http.Get("https://www.google.com") 
+	if err != nil {
+		fmt.Println("Ping Error:", err)
+	}
+	latency := time.Since(start).Milliseconds()
+
+	// --- 2. Real Speed Test (Upload/Download) ---
+	var dlSpeed, ulSpeed float64
+	user, _ := speedtest.FetchUserInfo()
+	serverList, _ := speedtest.FetchServerList(user)
+	targets, _ := serverList.FindServer([]int{})
+
+	if len(targets) > 0 {
+		s := targets[0]
+		s.PingTest(nil)
+		s.DownloadTest()
+		s.UploadTest()
+        
+        // Convert to Mbps (Megabits per second)
+		dlSpeed = s.DLSpeed 
+		ulSpeed = s.ULSpeed
+	}
+
+	uptimeStr := getFormattedUptime() // Assuming you have this function
+
+	// --- 3. Heavy Style Message Formatting ---
+	msg := fmt.Sprintf(`╔════════════════════════╗
+║    ⚡ 𝐒𝐘𝐒𝐓𝐄𝐌 𝐒𝐓𝐀𝐓𝐔𝐒 ⚡
+╠════════════════════════╣
+║ 📶 𝐋𝐚𝐭𝐞𝐧𝐜𝐲   : %d ms
+║ ⬇️ 𝐃𝐨𝐰𝐧𝐥𝐨𝐚𝐝  : %.2f Mbps
+║ ⬆️ 𝐔𝐩𝐥𝐨𝐚𝐝    : %.2f Mbps
+╠════════════════════════╣
+║ ⏱️ 𝐔𝐩𝐭𝐢𝐦𝐞    : %s
+║ 👑 𝐎𝐰𝐧𝐞𝐫     : %s
+╠════════════════════════╣
+║   🟢 𝐒𝐞𝐫𝐯𝐞𝐫 𝐢𝐬 𝐎𝐧𝐥𝐢𝐧𝐞
+╚════════════════════════╝`, latency, dlSpeed, ulSpeed, uptimeStr, OWNER_NAME)
+
 	sendReplyMessage(client, v, msg)
 }
+
 
 func sendID(client *whatsmeow.Client, v *events.Message) {
 	user := v.Info.Sender.User
