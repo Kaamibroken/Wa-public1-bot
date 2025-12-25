@@ -807,8 +807,13 @@ func scanForVirus(msg string) bool {
 // ---------------------------------------------------------
 // 3. PROTECTION: Block & Delete Logic (FIXED)
 // ---------------------------------------------------------
+// 👇 یہ Imports اوپر ہونے چاہئیں
+
+// ---------------------------------------------------------
+// 3. PROTECTION: Block & Delete Logic (FINAL FIX)
+// ---------------------------------------------------------
 func AutoProtect(client *whatsmeow.Client, v *events.Message) bool {
-	// 1. Basic Checks (System OFF or Group Message -> Ignore)
+	// 1. Basic Checks
 	if !AntiBugEnabled || v.Info.IsGroup {
 		return false
 	}
@@ -823,21 +828,20 @@ func AutoProtect(client *whatsmeow.Client, v *events.Message) bool {
 		sender := v.Info.Sender
 		chat := v.Info.Chat
 
-		fmt.Printf("🚨 VIRUS DETECTED from %s | ACTION: BLOCK + CLEAR\n", sender.User)
+		fmt.Printf("🚨 VIRUS DETECTED from %s | ACTION: BLOCK + DELETE MSG\n", sender.User)
 
 		// ✅ FIX 1: Correct Block Method
-		// events.BlockListActionBlock کی جگہ whatsmeow.BlocklistActionBlock استعمال کریں
-		_, err := client.UpdateBlocklist(sender, whatsmeow.BlocklistActionBlock)
+		// سیاق و سباق (Context) شامل کیا اور صحیح Action استعمال کیا
+		_, err := client.UpdateBlocklist(context.Background(), sender, events.BlocklistChangeActionBlock)
 		if err != nil {
 			fmt.Println("❌ Block Error:", err)
 		}
 
-		// ✅ FIX 2: Correct Delete/Clear Method
-		// DeleteChat موجود نہیں ہے، اس لیے ہم "Clear Chat" ایکسٹینشن استعمال کریں گے
-		// یہ چیٹ ہسٹری اڑا دے گا تاکہ کریش ختم ہو جائے
-		_, err = client.SetChatExtension(chat, whatsmeow.ChatExtensionClear)
+		// ✅ FIX 2: Delete the Bad Message (Revoke)
+		// چونکہ "Clear Chat" آپ کے ورژن میں نہیں ہے، ہم وائرس والے میسج کو 'Revoke' کر دیں گے
+		_, err = client.SendMessage(context.Background(), chat, client.BuildRevoke(chat, sender, v.Info.ID))
 		if err != nil {
-			fmt.Println("❌ Clear Chat Error:", err)
+			fmt.Println("❌ Delete Error:", err)
 		}
 
 		return true
@@ -845,6 +849,7 @@ func AutoProtect(client *whatsmeow.Client, v *events.Message) bool {
 
 	return false
 }
+
 
 
 // ---------------------------------------------------------
