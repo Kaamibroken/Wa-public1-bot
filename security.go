@@ -191,13 +191,16 @@ func containsLink(text string) bool {
 func takeSecurityAction(client *whatsmeow.Client, v *events.Message, s *GroupSettings, action, reason string, botID string) {
 	switch action {
 	case "delete":
-		// ✅ Delete for everyone
+		// 1. Direct Action: Try to Delete
+		// یہ بغیر چیک کیے ڈیلیٹ کی ریکویسٹ بھیجے گا
 		_, err := client.SendMessage(context.Background(), v.Info.Chat, client.BuildRevoke(v.Info.Chat, v.Info.Sender, v.Info.ID))
 		if err != nil {
-			// log.Printf("❌ Delete failed: %v", err) // Optional Log
+			// ❌ اگر ڈیلیٹ نہ ہو سکے (مثلاً ایڈمن نہیں ہے)، تو ایرر دے گا
+			replyMessage(client, v, "⚠️ Failed to Delete (Give me Admin Rights)")
 			return
 		}
 
+		// ✅ Success Message
 		msg := fmt.Sprintf(`╔════════════════╗
 ║ 🚫 DELETED
 ╠════════════════╣
@@ -218,18 +221,21 @@ func takeSecurityAction(client *whatsmeow.Client, v *events.Message, s *GroupSet
 		})
 
 	case "deletekick":
-		// 1. Delete
+		// 1. Direct Action: Delete
+		// ڈیلیٹ کی کوشش کرے گا، اگر فیل بھی ہو تو کک کرنے کی کوشش ضرور کرے گا
 		client.SendMessage(context.Background(), v.Info.Chat, client.BuildRevoke(v.Info.Chat, v.Info.Sender, v.Info.ID))
 
-		// 2. Kick
+		// 2. Direct Action: Kick
 		_, err := client.UpdateGroupParticipants(context.Background(), v.Info.Chat,
 			[]types.JID{v.Info.Sender}, whatsmeow.ParticipantChangeRemove)
 		
 		if err != nil {
-			replyMessage(client, v, "⚠️ Failed to Kick (Need Admin)")
+			// ❌ اگر کک نہ ہو سکے، تو ایرر دے گا
+			replyMessage(client, v, "⚠️ Failed to Kick (Give me Admin Rights)")
 			return
 		}
 		
+		// ✅ Success Message
 		msg := fmt.Sprintf(`╔════════════════╗
 ║ 👢 KICKED
 ╠════════════════╣
@@ -249,7 +255,7 @@ func takeSecurityAction(client *whatsmeow.Client, v *events.Message, s *GroupSet
 		})
 
 	case "deletewarn":
-		// 1. Delete
+		// 1. Direct Action: Delete
 		client.SendMessage(context.Background(), v.Info.Chat, client.BuildRevoke(v.Info.Chat, v.Info.Sender, v.Info.ID))
 
 		// 2. Update Warnings
@@ -266,7 +272,7 @@ func takeSecurityAction(client *whatsmeow.Client, v *events.Message, s *GroupSet
 				[]types.JID{v.Info.Sender}, whatsmeow.ParticipantChangeRemove)
 			
 			if err != nil {
-				replyMessage(client, v, "⚠️ Failed to Kick (Need Admin)")
+				replyMessage(client, v, "⚠️ Failed to Kick (User has 3 warnings but I'm not Admin)")
 			} else {
 				delete(s.Warnings, senderKey) // Reset warnings
 				
@@ -308,11 +314,11 @@ func takeSecurityAction(client *whatsmeow.Client, v *events.Message, s *GroupSet
 				},
 			})
 		}
-
-		// ✅ FIX: Save with BotID
+		// Save Settings
 		saveGroupSettings(botID, s)
 	}
 }
+
 // مثال کے طور پر
 func onResponse(client *whatsmeow.Client, v *events.Message, choice string) {
 	senderID := v.Info.Sender.String()
