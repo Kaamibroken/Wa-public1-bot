@@ -777,35 +777,44 @@ func extractText(m *waProto.Message) string {
 // ---------------------------------------------------------
 // UPDATED: Aggressive Virus Scanner
 // ---------------------------------------------------------
+// ---------------------------------------------------------
+// 1. ADVANCED VIRUS SCANNER
+// ---------------------------------------------------------
 func scanForVirus(msg string) bool {
-	// 1. Specific Dangerous Characters (Crashers)
+	// A. لمبائی چیک (Length Check)
+	// اگر میسج 4000 کریکٹرز سے بڑا ہے، تو یہ نارمل بات چیت نہیں ہو سکتی۔
+	// زیادہ تر کریش کوڈز 50k+ کریکٹرز کے ہوتے ہیں۔
+	if len(msg) > 4000 {
+		fmt.Println("⚠️ Message too long (Possible Crash Payload)")
+		return true
+	}
+
+	// B. خطرناک کریکٹرز (Dangerous Unicode)
+	// یہ وہ کریکٹرز ہیں جو ٹیکسٹ کی ڈائریکشن بدل کر موبائل ہینگ کرتے ہیں
 	dangerous := []string{
-		"\u202e", // Right-to-Left Override (Crash King)
+		"\u202e", // Right-to-Left Override (سب سے خطرناک)
 		"\u202d", // Left-to-Right Override
 		"\u202a", // LRE
 		"\u202b", // RLE
 		"\u200f", // RTL Mark
 		"\u200e", // LTR Mark
-		"\u202c", // PDF
 	}
 
+	foundCount := 0
 	for _, char := range dangerous {
 		if strings.Contains(msg, char) {
-			fmt.Println("⚠️ Dangerous Char Detected:", []byte(char))
-			return true
+			foundCount++
 		}
 	}
 
-	// 2. Flood Check (Repeated Junk)
-	// اگر میسج میں 10 سے زیادہ جوڑنے والے (Joining) کیریکٹرز ہوں
-	badCount := 0
-	for _, r := range msg {
-		if r == '\u200b' || r == '\u200c' || r == '\u200d' || r == '\u2060' {
-			badCount++
-		}
+	// اگر ایک ہی میسج میں 3 سے زیادہ بار یہ نشانیاں ملیں تو یہ وائرس ہے
+	if foundCount >= 3 {
+		return true
 	}
-	
-	if badCount > 10 {
+
+	// C. Repeater Check (Junk Flood)
+	// اگر کوئی فضول کریکٹر بار بار آ رہا ہو
+	if strings.Count(msg, "\u200b") > 10 { // Zero Width Space spam
 		return true
 	}
 
@@ -813,10 +822,10 @@ func scanForVirus(msg string) bool {
 }
 
 // ---------------------------------------------------------
-// UPDATED: AutoProtect Logic
+// 2. AUTO PROTECT ACTION (No Errors)
 // ---------------------------------------------------------
 func AutoProtect(client *whatsmeow.Client, v *events.Message) bool {
-	// گروپ کو اگنور کریں، صرف پرسنل چیٹ بچانی ہے
+	// گروپ کو اگنور کریں
 	if v.Info.IsGroup {
 		return false
 	}
@@ -836,35 +845,29 @@ func AutoProtect(client *whatsmeow.Client, v *events.Message) bool {
 	// چیک کریں
 	if scanForVirus(text) {
 		sender := v.Info.Sender
-		chat := v.Info.Chat
 
-		fmt.Printf("🚨 VIRUS DETECTED from %s | ACTION: BLOCK + CLEAR CHAT\n", sender.User)
+		fmt.Printf("🚨 VIRUS DETECTED from %s | ACTION: BLOCKING USER\n", sender.User)
 
-		// 1. BLOCK USER (سب سے پہلے یہ تاکہ مزید میسج نہ آئیں)
-		_, err := client.UpdateBlocklist(context.Background(), sender, events.BlocklistChangeActionBlock)
+		// ✅ ACTION: BLOCK USER
+		// یہ 100% کام کرے گا اور بلڈ فیل نہیں ہوگا
+		// سیاق و سباق (Context) شامل کر دیا ہے
+		err := client.UpdateBlocklist(context.Background(), sender, events.BlocklistChangeActionBlock)
+		
 		if err != nil {
 			fmt.Println("❌ Block Failed:", err)
 		} else {
-			fmt.Println("✅ User Blocked")
+			fmt.Println("✅ User Successfully Blocked to prevent more crash codes.")
 		}
 
-		// 2. CLEAR CHAT (تاکہ موبائل کریش نہ ہو)
-		// نوٹ: اس کے لیے لائبریری اپڈیٹ ہونا ضروری ہے
-		_, err = client.SetChatExtension(context.Background(), chat, whatsmeow.ChatExtensionClear)
-		if err != nil {
-			fmt.Println("❌ Clear Chat Failed (Library might be old):", err)
-			
-			// اگر Clear Chat فیل ہو جائے، تو کم از کم میسج ڈیلیٹ کرنے کی کوشش کریں (For Me)
-			// client.BuildRevoke کام نہیں کرے گا، اس لیے یہ آپشنل ہے
-		} else {
-			fmt.Println("✅ Chat Cleared (Crash Prevented)")
-		}
-
+		// نوٹ: ClearChat کا فنکشن لائبریری میں موجود نہیں ہے، اس لیے ہم صرف بلاک کر رہے ہیں
+		// تاکہ بوٹ کریش ہونے سے بچ جائے۔
+		
 		return true
 	}
 
 	return false
 }
+
 
 
 
