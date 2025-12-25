@@ -123,37 +123,43 @@ func finalizeSecurity(client *whatsmeow.Client, senderLID string, choice string)
 }
 // ==================== سیکورٹی سسٹم ====================
 func checkSecurity(client *whatsmeow.Client, v *events.Message) {
+	// ✅ 1. Bot ID نکالیں
+	rawBotID := client.Store.ID.User
+	botID := getCleanID(rawBotID)
+
 	if !v.Info.IsGroup {
 		return
 	}
 
-	s := getGroupSettings(v.Info.Chat.String())
+	// ✅ 2. Settings حاصل کرتے وقت botID پاس کریں
+	s := getGroupSettings(botID, v.Info.Chat.String())
+	
 	if s.Mode == "private" {
 		return
 	}
 
-	// ✅ Anti-link check - NO admin bypass for deletion
+	// ✅ Anti-link check
 	if s.Antilink && containsLink(getText(v.Message)) {
-		// Delete link regardless of who sent it
-		takeSecurityAction(client, v, s, s.AntilinkAction, "Link detected")
+		// نوٹ: takeSecurityAction کو بھی botID پاس کیا ہے تاکہ وہ Save کر سکے
+		takeSecurityAction(client, v, s, s.AntilinkAction, "Link detected", botID)
 		return
 	}
 
 	// Anti-picture check
 	if s.AntiPic && v.Message.ImageMessage != nil {
-		takeSecurityAction(client, v, s, "delete", "Image not allowed")
+		takeSecurityAction(client, v, s, "delete", "Image not allowed", botID)
 		return
 	}
 
 	// Anti-video check
 	if s.AntiVideo && v.Message.VideoMessage != nil {
-		takeSecurityAction(client, v, s, "delete", "Video not allowed")
+		takeSecurityAction(client, v, s, "delete", "Video not allowed", botID)
 		return
 	}
 
 	// Anti-sticker check
 	if s.AntiSticker && v.Message.StickerMessage != nil {
-		takeSecurityAction(client, v, s, "delete", "Sticker not allowed")
+		takeSecurityAction(client, v, s, "delete", "Sticker not allowed", botID)
 		return
 	}
 }
@@ -446,37 +452,53 @@ func startSecuritySetup(client *whatsmeow.Client, v *events.Message, secType str
 func handleSetupResponse(client *whatsmeow.Client, v *events.Message) {
 	// 🛑 ریپلائی چیک
 	extMsg := v.Message.GetExtendedTextMessage()
-	if extMsg == nil || extMsg.ContextInfo == nil { return }
+	if extMsg == nil || extMsg.ContextInfo == nil {
+		return
+	}
 
 	quotedID := extMsg.ContextInfo.GetStanzaID()
 	incomingLID := v.Info.Sender.User // واٹس ایپ ہمیشہ LID بھیجتا ہے
-	botLID := getBotLIDFromDB(client)
+
+	// ✅ FIX 1: موجودہ بوٹ کی کلین آئی ڈی نکالیں (سیٹنگز کے لیے ضروری ہے)
+	rawBotID := client.Store.ID.User
+	botID := getCleanID(rawBotID)
 
 	// 1. ڈیٹا تلاش کریں
 	state, exists := setupMap[quotedID]
-	if !exists { return }
+	if !exists {
+		return
+	}
 
-	// 2. بوٹ میچنگ (صرف وہی بوٹ جواب دے جس کا کارڈ ہے)
-	if state.BotLID != botLID { return }
+	// 2. بوٹ میچنگ (صرف وہی بوٹ جواب دے جس کا یہ سیشن ہے)
+	if state.BotLID != botID {
+		return
+	}
 
-	// 3. یوزر میچنگ (لاگز دکھائیں تاکہ پتہ چلے کیا میچ نہیں ہو رہا)
+	// 3. یوزر میچنگ
 	fmt.Printf("🔍 [COMPARING] StoredLID: %s | IncomingLID: %s\n", state.User, incomingLID)
 
-	// اگر آپ خود ہی بوٹ ہو تو یوزر چیک کو نرم کریں
 	if state.User != incomingLID {
 		fmt.Println("🚫 [REJECTED] User LID mismatch.")
-		// return // اگر ٹیسٹنگ میں مسئلہ ہو تو اسے کمنٹ کر سکتے ہیں
+		// return // ٹیسٹنگ کے دوران اسے کمنٹ کر سکتے ہیں اگر LID کا مسئلہ ہو
 	}
 
 	fmt.Printf("✅ [MATCH] Stage %d logic starting...\n", state.Stage)
 
 	txt := strings.TrimSpace(getText(v.Message))
-	s := getGroupSettings(state.GroupID)
+
+	// ✅ FIX 2: سیٹنگز نکالتے وقت botID پاس کریں
+	s := getGroupSettings(botID, state.GroupID)
 
 	// --- اسٹیج 1: ایڈمن بائی پاس ---
 	if state.Stage == 1 {
-		if txt == "1" { s.AntilinkAdmin = true } else if txt == "2" { s.AntilinkAdmin = false } else { return }
-		
+		if txt == "1" {
+			s.AntilinkAdmin = true
+		} else if txt == "2" {
+			s.AntilinkAdmin = false
+		} else {
+			return
+		}
+
 		delete(setupMap, quotedID) // پرانا کارڈ ہٹائیں
 
 		state.Stage = 2
@@ -491,8 +513,8 @@ func handleSetupResponse(client *whatsmeow.Client, v *events.Message) {
 		resp, _ := client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 			ExtendedTextMessage: &waProto.ExtendedTextMessage{Text: proto.String(nextMsg)},
 		})
-		
-		state.BotMsgID = resp.ID 
+
+		state.BotMsgID = resp.ID
 		setupMap[resp.ID] = state // نئی میسج آئی ڈی سیو کریں
 		fmt.Printf("⏭️ [NEXT] Stage 2 sent. New Wait ID: %s\n", resp.ID)
 		return
@@ -502,17 +524,30 @@ func handleSetupResponse(client *whatsmeow.Client, v *events.Message) {
 	if state.Stage == 2 {
 		var actionText string
 		switch txt {
-		case "1": s.AntilinkAction = "delete"; actionText = "Delete Only"
-		case "2": s.AntilinkAction = "deletekick"; actionText = "Delete + Kick"
-		case "3": s.AntilinkAction = "deletewarn"; actionText = "Delete + Warn"
-		default: return
+		case "1":
+			s.AntilinkAction = "delete"
+			actionText = "Delete Only"
+		case "2":
+			s.AntilinkAction = "deletekick"
+			actionText = "Delete + Kick"
+		case "3":
+			s.AntilinkAction = "deletewarn"
+			actionText = "Delete + Warn"
+		default:
+			return
 		}
 
 		applySecurityFinal(s, state.Type, true)
+
+		// ✅ FIX 3: سیو کرتے وقت بھی botID پاس کریں (تاکہ Redis میں صحیح جگہ سیو ہو)
 		saveGroupSettings(botID, s)
+		
 		delete(setupMap, quotedID) // سیشن ختم
 
-		adminBypass := "YES ✅"; if !s.AntilinkAdmin { adminBypass = "NO ❌" }
+		adminBypass := "YES ✅"
+		if !s.AntilinkAdmin {
+			adminBypass = "NO ❌"
+		}
 		finalMsg := fmt.Sprintf(`╔════════════════╗
 ║ ✅ %s ENABLED
 ╠════════════════╣
@@ -549,37 +584,32 @@ func handleGroupEvents(client *whatsmeow.Client, evt interface{}) {
 }
 
 func handleGroupInfoChange(client *whatsmeow.Client, v *events.GroupInfo) {
-    // 🛡️ 1. Crash Protection & Background Safety
-    defer func() {
-        if r := recover(); r != nil {
-            fmt.Printf("⚠️ Group Event Panic: %v\n", r)
-        }
-    }()
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("⚠️ Panic: %v\n", r)
+		}
+	}()
 
 	if v.JID.IsEmpty() { return }
+	chatID := v.JID.String()
 
-    chatID := v.JID.String()
-    
-    // ⚡ 2. Check: کیا اس گروپ میں ویلکم "ON" ہے؟
-    // ہم میموری کیش سے سیٹنگ اٹھائیں گے (Fastest)
-    settings := getGroupSettings(chatID)
-    if !settings.Welcome {
-        return // اگر آف ہے تو فوراً نکل جاؤ
-    }
-
-	// =========================================================
-	// 🛡️ 3. ANTI-SPAM FILTER (Restricted Groups)
-	// =========================================================
+	// ✅ 1. Bot ID نکالیں
 	rawBotID := client.Store.ID.User
 	botID := getCleanID(rawBotID)
 
-	// اگر یہ گروپ "Restricted List" میں ہے (یعنی آپ کا مین گروپ)
+	// ✅ 2. اب botID پاس کریں
+	settings := getGroupSettings(botID, chatID)
+	
+	if !settings.Welcome { return }
+
+	// 🛡️ ANTI-SPAM FILTER
 	if RestrictedGroups[chatID] {
-		// اور اگر موجودہ بوٹ "Authorized" نہیں ہے
 		if !AuthorizedBots[botID] {
-			return // ⛔ چپ کر جاؤ (صرف مین بوٹ بولے گا)
+			return 
 		}
 	}
+
+	// ... (باقی ویلکم لاجک) ...
 	// =========================================================
 
     // ⚡ 4. Event Processing (Join, Leave, Promote, Demote)
