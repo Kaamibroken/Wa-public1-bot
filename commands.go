@@ -703,6 +703,7 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 ║ ╰───────────────────────╯
 ║                             
 ║ ╭──── BOT SETTINGS ─────╮
+║ │ 🔸 *%ssetprefix* - Reply Symbol
 ║ │ 🔸 *%saddstatus* - Auto Status
 ║ │ 🔸 *%salwaysonline* - Online 24/7
 ║ │ 🔸 *%santilink* - Link Protection
@@ -754,7 +755,7 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 		// گروپ (7)
 		p, p, p, p, p, p, p,
 		// سیٹنگز (12)
-		p, p, p, p, p, p, p, p, p, p, p, p,
+		p, p, p, p, p, p, p, p, p, p, p, p, p,
 		// ٹولز (16)
 		p, p, p, p, p, p, p, p, p, p, p, p, p, p, p, p, p, p, p, p, p)
 

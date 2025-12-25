@@ -244,8 +244,7 @@ func handleGroup(client *whatsmeow.Client, v *events.Message, args []string) {
 		msg := fmt.Sprintf(`╔════════════════╗
 ║ 🔗 LINK
 ╠════════════════
-║ https://chat.
-║ whatsapp.com/
+║ Group Link 🖇️ 
 ║ %s
 ╚════════════════`, code)
 		replyMessage(client, v, msg)

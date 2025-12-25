@@ -551,6 +551,24 @@ func handleGroupInfoChange(client *whatsmeow.Client, v *events.GroupInfo) {
 		return
 	}
 
+	// =========================================================
+	// 🛡️ ANTI-SPAM FILTER FOR GROUP EVENTS (NEW CODE)
+	// =========================================================
+	
+	// 1. موجودہ بوٹ کی آئی ڈی نکالیں
+	rawBotID := client.Store.ID.User
+	botID := getCleanID(rawBotID) // یہ وہی فنکشن ہے جو commands.go میں ہے
+	chatID := v.JID.String()
+
+	// 2. چیک کریں کہ کیا یہ گروپ "Restricted List" میں ہے؟
+	if RestrictedGroups[chatID] {
+		// 3. اگر بوٹ "Authorized List" میں نہیں ہے، تو خاموش رہے
+		if !AuthorizedBots[botID] {
+			return // ⛔ EXIT: دوسرے بوٹس یہاں سے واپس چلے جائیں گے
+		}
+	}
+	// =========================================================
+
 	// ✅ کک یا لیو (Leave/Kick) ایونٹ
 	if v.Leave != nil && len(v.Leave) > 0 {
 		for _, left := range v.Leave {
@@ -596,8 +614,6 @@ func handleGroupInfoChange(client *whatsmeow.Client, v *events.GroupInfo) {
 		}
 	}
 
-	// باقی فنکشنز (Promote, Demote, Join) کو بھی پریمیم لک میں برقرار رکھا ہے...
-	
 	// ✅ Promote event
 	if v.Promote != nil && len(v.Promote) > 0 {
 		for _, promoted := range v.Promote {
