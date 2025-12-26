@@ -101,6 +101,7 @@ func canExecute(client *whatsmeow.Client, v *events.Message, cmd string) bool {
 }
 
 // ⚡ MAIN MESSAGE PROCESSOR (FULL & OPTIMIZED)
+// ⚡ MAIN MESSAGE PROCESSOR (FULL & OPTIMIZED)
 func processMessage(client *whatsmeow.Client, v *events.Message) {
 	// ⚡ 1. Panic Recovery
 	defer func() {
@@ -146,10 +147,6 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			fmt.Printf("🛡️ MALICIOUS BUG DETECTED in DM! From: %s | Cleaning...\n", v.Info.Sender.User)
 			
 			// 1. میسج سب کے لیے ڈیلیٹ کریں (Revoke)
-			// نوٹ: پرائیویٹ چیٹ میں آپ دوسرے کا میسج Revoke نہیں کر سکتے (یہ واٹس ایپ کی لمیٹیشن ہے)،
-			// لیکن آپ "Clear Chat" کمانڈ چلا سکتے ہیں اگر آپ نے خود بنایا ہو، 
-			// یا کم از کم بوٹ کو کریش ہونے سے بچانے کے لیے return کروا سکتے ہیں۔
-			// ٹیسٹنگ کے لیے ہم یہاں Revoke کی کوشش کریں گے۔
 			client.RevokeMessage(context.Background(), v.Info.Chat, v.Info.ID)
 			
 			// 2. فنکشن یہیں روک دیں (Return)
@@ -313,7 +310,8 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		words := strings.Fields(msgWithoutPrefix)
 		if len(words) == 0 { return }
 		
-		parts := strings.Fields(msgText)
+		// ✅ FIX: yahan 'msgText' ki jagah 'bodyClean' use karein
+		parts := strings.Fields(bodyClean)
 
 		cmd := strings.ToLower(words[0])
 		args := parts[1:] 
@@ -326,11 +324,8 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		fmt.Printf("🚀 [EXEC] Bot:%s | CMD:%s\n", botID, cmd)
 
 		// 🔥 E. THE SWITCH
-	//	switch cmd {
-
-
-		// 🔥 E. THE SWITCH
 		switch cmd {
+
 		// ✅ WELCOME TOGGLE COMMAND
 		case "welcome", "wel":
 			if !isAdmin(client, v.Info.Chat, v.Info.Sender) && !isOwner(client, v.Info.Sender) {
