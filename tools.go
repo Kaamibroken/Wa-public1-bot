@@ -96,7 +96,7 @@ func handleToSticker(client *whatsmeow.Client, v *events.Message) {
 	// --- Strict Size Limit ---
 	// اگر فائل اب بھی 1MB سے اوپر جا رہی ہے تو اسے روک دینا بہتر ہے ورنہ پھر Retry آئے گا۔
 	// زیادہ تر Retry تب آتا ہے جب فائل 1MB کے قریب ہو۔
-	if len(finalData) > 1500000 { // Limit set to 1.5MB
+	if len(finalData) > 15000000 { // Limit set to 1.5MB
 		replyMessage(client, v, "⚠️ Resulting sticker is still too heavy for WhatsApp.")
 		os.Remove(input); os.Remove(output)
 		return
