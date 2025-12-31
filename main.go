@@ -118,9 +118,8 @@ func main() {
 	dbLog := waLog.Stdout("Database", "ERROR", true)
 	container = sqlstore.NewWithDB(rawDB, "postgres", dbLog)
 
-	// 🔥🔥🔥 [FIX ADDED] آٹو ٹیبل جنریشن 🔥🔥🔥
-	// یہ لائن چیک کرے گی اور اگر ٹیبل نہیں ہیں تو بنا دے گی
-	err = container.Upgrade()
+	// 🔥🔥🔥 [FIXED] اب Context پاس کر دیا ہے 🔥🔥🔥
+	err = container.Upgrade(context.Background()) 
 	if err != nil {
 		log.Fatalf("❌ Failed to initialize database tables: %v", err)
 	}
@@ -179,6 +178,7 @@ func main() {
 	}
 	fmt.Println("👋 Goodbye!")
 }
+
 
 
 // ✅ ⚡ بوٹ کنیکٹ (Same logic, slightly cleaned up)
