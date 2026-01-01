@@ -180,6 +180,9 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 	// =========================================================================
 	// 🚀 GOROUTINE START (سب کچھ اب بیک گراؤنڈ میں چلے گا)
 	// =========================================================================
+	// =========================================================================
+	// 🚀 GOROUTINE START (سب کچھ اب بیک گراؤنڈ میں چلے گا)
+	// =========================================================================
 	go func() {
 		// 🛡️ Inner Panic Recovery for Thread Safety
 		defer func() {
@@ -218,8 +221,6 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			
 			// Auto Read Logic
 			if doRead {
-				// اگر گروپ ہے تو تھوڑی تاخیر یا فلٹر لگا سکتے ہیں، فی الحال ویسا ہی رکھا ہے
-				// لیکن یہ بیک گراؤنڈ میں ہے تو مین تھریڈ کو نہیں روکے گا
 				client.MarkRead(context.Background(), []types.MessageID{v.Info.ID}, v.Info.Timestamp, v.Info.Chat, v.Info.Sender)
 			}
 			
@@ -251,7 +252,6 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		}()
 
 		// 🔍 C. Session Checks (Reply Handling)
-		// یہ حصہ تبھی چلے گا جب میسج "Reply" والا ہو (تیز رفتاری کے لیے)
 		extMsg := v.Message.GetExtendedTextMessage()
 		if extMsg != nil && extMsg.ContextInfo != nil && extMsg.ContextInfo.StanzaID != nil {
 			qID := extMsg.ContextInfo.GetStanzaID()
@@ -278,18 +278,15 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 				return
 			}
 
-			// 🔥 4. AI CONTEXTUAL REPLY (Only check if it's a reply)
-			// اگر میسج کمانڈ نہیں ہے، تبھی AI چیک کریں تاکہ کمانڈز بلاک نہ ہوں
+			// 🔥 4. AI CONTEXTUAL REPLY
 			if !isCommand {
-				// یہ فنکشن (ai_tool.go میں) خود چیک کرے گا کہ کیا رپلائی AI میسج پر ہے؟
-				// اگر نہیں، تو یہ فوراً false ریٹرن کرے گا اور ٹائم ضائع نہیں ہوگا۔
 				if handleAIReply(client, v) {
 					return
 				}
 			}
 		}
 
-		// TikTok No-Command Reply (Existing)
+		// TikTok No-Command Reply
 		if _, ok := ttCache[senderID]; ok && !isCommand {
 			if bodyClean == "1" || bodyClean == "2" || bodyClean == "3" {
 				handleTikTokReply(client, v, bodyClean, senderID)
@@ -297,18 +294,14 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			}
 		}
 
-		// ⚡ D. COMMAND PARSING
-		// ⚡ D. COMMAND PARSING
+		// ⚡ D. COMMAND PARSING & SECURITY (EAGLE EYE 🦅)
 		if !isCommand {
-			// اگر کمانڈ نہیں ہے، تو سیکیورٹی چیک کریں (صرف گروپس میں)
 			if v.Info.IsGroup {
 				// 🔥🔥🔥 [EAGLE EYE SECURITY CHECK] 🔥🔥🔥
-				
 				hasLink := false
-				bodyLower := strings.ToLower(bodyClean) // چیکنگ کے لیے چھوٹا کر لیں
+				bodyLower := strings.ToLower(bodyClean)
 
-				// 1. Known Protocols & Shorteners (تیز ترین چیک)
-				// اس میں عام اور خطرناک لنکس شامل ہیں
+				// 1. Known Protocols & Shorteners
 				quickCheck := []string{
 					"http", "www.", "wa.me", "t.me", "bit.ly", "goo.gl", 
 					"tinyurl", "youtu.be", "chat.whatsapp.com", 
@@ -324,30 +317,22 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 					}
 				}
 
-				// 2. "The Smart Eye" (اگر اوپر کچھ نہیں ملا تو یہاں ڈیپ چیک ہوگا)
-				// یہ کسٹم ڈومینز کو پکڑنے کے لیے ہے (جیسے: myshop.guru, link.bio)
+				// 2. "The Smart Eye" (For custom domains without http)
 				if !hasLink {
 					words := strings.Fields(bodyClean)
 					for _, w := range words {
-						// صفائی: بریکٹ وغیرہ ہٹائیں
 						w = strings.Trim(w, "()[]{},;\"'*")
-						
-						// لاجک: لفظ میں ڈاٹ (.) ہو، لیکن شروع یا آخر میں نہ ہو
 						if idx := strings.Index(w, "."); idx > 0 && idx < len(w)-1 {
 							parts := strings.Split(w, ".")
-							lastPart := parts[len(parts)-1] // ڈاٹ کے بعد والا حصہ (TLD)
-
-							// شرط: ڈاٹ کے بعد والا حصہ نمبر نہیں ہونا چاہیے (تاکہ 5.5 یا 3.14 نہ پکڑا جائے)
-							// اور اس کی لمبائی کم از کم 2 ہونی چاہیے (جیسے .pk, .co)
+							lastPart := parts[len(parts)-1]
+							
 							isAlpha := true
 							for _, c := range lastPart {
-								if c < 'a' || c > 'z' { // صرف انگلش حروف ہونے چاہئیں
+								if c < 'a' || c > 'z' {
 									isAlpha = false
 									break
 								}
 							}
-
-							// اگر ڈاٹ کے بعد 2 سے زیادہ حروف ہیں اور وہ انگلش ہیں، تو یہ لنک ہے!
 							if len(lastPart) >= 2 && isAlpha {
 								hasLink = true
 								break
@@ -361,15 +346,15 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 				isVideo := v.Message.VideoMessage != nil
 				isSticker := v.Message.StickerMessage != nil
 
-				// 🚀 فائنل فیصلہ: اگر کچھ نہیں ملا تو واپس جاؤ (RAM بچاؤ)
+				// 🚀 RAM Optimization: If safe, return immediately
 				if !hasLink && !isImage && !isVideo && !isSticker {
 					return
 				}
 
-				// اگر کچھ مشکوک ملا ہے تو سیٹنگز چیک کرو
+				// 4. Check Database Settings ONLY if needed
 				s := getGroupSettings(botID, chatID)
-
 				shouldCheck := false
+				
 				if hasLink && s.Antilink { shouldCheck = true }
 				if isImage && s.AntiPic { shouldCheck = true }
 				if isVideo && s.AntiVideo { shouldCheck = true }
@@ -379,26 +364,6 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 					checkSecurity(client, v)
 				}
 			}
-			return
-		}
-
-
-				// 2. Load Settings (From RAM Cache - Fast)
-				s := getGroupSettings(botID, chatID)
-
-				// 3. Strict Logic Gate:
-				// صرف تب checkSecurity کال کریں اگر وہ مخصوص سیٹنگ ON ہو
-				shouldCheck := false
-
-				if hasLink && s.Antilink { shouldCheck = true }
-				if isImage && s.AntiPic { shouldCheck = true }
-				if isVideo && s.AntiVideo { shouldCheck = true }
-				if isSticker && s.AntiSticker { shouldCheck = true }
-
-				// اگر سیٹنگ ON ہے، تبھی سیکیورٹی فنکشن کو زحمت دیں
-				if shouldCheck {
-					checkSecurity(client, v)
-				}
 			return
 		}
 
@@ -409,13 +374,14 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			}
 		}
 
+		// Command Argument Extraction
 		msgWithoutPrefix := strings.TrimPrefix(bodyClean, prefix)
 		words := strings.Fields(msgWithoutPrefix)
 		if len(words) == 0 {
 			return
 		}
 
-		parts := strings.Fields(bodyClean) // For Args extraction
+		parts := strings.Fields(bodyClean)
 		cmd := strings.ToLower(words[0])
 		args := parts[1:]
 		fullArgs := strings.TrimSpace(strings.Join(words[1:], " "))
@@ -428,8 +394,8 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		// Log Command
 		fmt.Printf("🚀 [EXEC] Bot:%s | CMD:%s\n", botID, cmd)
 
-		// 🔥 F. THE SWITCH (Commands Execution Starts Below)
-		// ... (Switch case logic remains same below) ...
+		// 🔥 F. THE SWITCH (Commands Execution)
+
 		switch cmd {
 
 		// ✅ WELCOME TOGGLE
