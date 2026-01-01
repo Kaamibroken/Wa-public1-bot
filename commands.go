@@ -399,7 +399,6 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 				if shouldCheck {
 					checkSecurity(client, v)
 				}
-			}
 			return
 		}
 
