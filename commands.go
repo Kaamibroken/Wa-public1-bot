@@ -205,7 +205,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			return
 		}
 
-		// 🔘 B. AUTO READ & REACT (ASYNC MODE 🚀)
+		// 🔘 B. AUTO READ & REACT (SMART OPTIMIZED MODE 🚀)
 		go func() {
 			defer func() { recover() }()
 			dataMutex.RLock()
@@ -213,23 +213,40 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			doReact := data.AutoReact
 			dataMutex.RUnlock()
 
+			// ⚡ FIX: گروپ میں سپیم روکنے کے لیے صرف تب ریڈ/ری ایکٹ کریں جب ضروری ہو
+			isPrivate := !v.Info.IsGroup
+			
+			// Auto Read Logic
 			if doRead {
+				// اگر گروپ ہے تو تھوڑی تاخیر یا فلٹر لگا سکتے ہیں، فی الحال ویسا ہی رکھا ہے
+				// لیکن یہ بیک گراؤنڈ میں ہے تو مین تھریڈ کو نہیں روکے گا
 				client.MarkRead(context.Background(), []types.MessageID{v.Info.ID}, v.Info.Timestamp, v.Info.Chat, v.Info.Sender)
 			}
+			
+			// Auto React Logic (Private Only or Mentioned in Group to avoid lag)
 			if doReact {
-				reactions := []string{"❤️", "🔥", "😂", "😍", "👍", "💯", "👀", "✨", "🚀", "🤖", "⭐", "✅", "⚡", "😎"}
-				randomEmoji := reactions[time.Now().UnixNano()%int64(len(reactions))]
-				client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
-					ReactionMessage: &waProto.ReactionMessage{
-						Key: &waProto.MessageKey{
-							RemoteJID: proto.String(v.Info.Chat.String()),
-							ID:        proto.String(v.Info.ID),
-							FromMe:    proto.Bool(false),
+				shouldReact := isPrivate // پرائیویٹ میں ہمیشہ کرو
+				
+				// اگر گروپ ہے تو صرف 10% میسجز پر کرو یا اگر مینشن ہو (تاکہ واٹس ایپ بلاک نہ کرے)
+				if v.Info.IsGroup && (strings.Contains(bodyClean, "@"+botID) || time.Now().Unix()%10 == 0) {
+					shouldReact = true
+				}
+
+				if shouldReact {
+					reactions := []string{"❤️", "🔥", "😂", "😍", "👍", "💯", "👀", "✨", "🚀", "🤖", "⭐", "✅", "⚡", "😎"}
+					randomEmoji := reactions[time.Now().UnixNano()%int64(len(reactions))]
+					client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
+						ReactionMessage: &waProto.ReactionMessage{
+							Key: &waProto.MessageKey{
+								RemoteJID: proto.String(v.Info.Chat.String()),
+								ID:        proto.String(v.Info.ID),
+								FromMe:    proto.Bool(false),
+							},
+							Text:              proto.String(randomEmoji),
+							SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
 						},
-						Text:              proto.String(randomEmoji),
-						SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
-					},
-				})
+					})
+				}
 			}
 		}()
 
@@ -281,10 +298,107 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		}
 
 		// ⚡ D. COMMAND PARSING
+		// ⚡ D. COMMAND PARSING
 		if !isCommand {
 			// اگر کمانڈ نہیں ہے، تو سیکیورٹی چیک کریں (صرف گروپس میں)
 			if v.Info.IsGroup {
-				checkSecurity(client, v)
+				// 🔥🔥🔥 [EAGLE EYE SECURITY CHECK] 🔥🔥🔥
+				
+				hasLink := false
+				bodyLower := strings.ToLower(bodyClean) // چیکنگ کے لیے چھوٹا کر لیں
+
+				// 1. Known Protocols & Shorteners (تیز ترین چیک)
+				// اس میں عام اور خطرناک لنکس شامل ہیں
+				quickCheck := []string{
+					"http", "www.", "wa.me", "t.me", "bit.ly", "goo.gl", 
+					"tinyurl", "youtu.be", "chat.whatsapp.com", 
+					".com", ".net", ".org", ".info", ".biz", ".xyz", 
+					".top", ".site", ".pro", ".club", ".io", ".ai", 
+					".co", ".pk", ".in", ".us", ".me", ".tk", ".ml", ".ga",
+				}
+
+				for _, key := range quickCheck {
+					if strings.Contains(bodyLower, key) {
+						hasLink = true
+						break
+					}
+				}
+
+				// 2. "The Smart Eye" (اگر اوپر کچھ نہیں ملا تو یہاں ڈیپ چیک ہوگا)
+				// یہ کسٹم ڈومینز کو پکڑنے کے لیے ہے (جیسے: myshop.guru, link.bio)
+				if !hasLink {
+					words := strings.Fields(bodyClean)
+					for _, w := range words {
+						// صفائی: بریکٹ وغیرہ ہٹائیں
+						w = strings.Trim(w, "()[]{},;\"'*")
+						
+						// لاجک: لفظ میں ڈاٹ (.) ہو، لیکن شروع یا آخر میں نہ ہو
+						if idx := strings.Index(w, "."); idx > 0 && idx < len(w)-1 {
+							parts := strings.Split(w, ".")
+							lastPart := parts[len(parts)-1] // ڈاٹ کے بعد والا حصہ (TLD)
+
+							// شرط: ڈاٹ کے بعد والا حصہ نمبر نہیں ہونا چاہیے (تاکہ 5.5 یا 3.14 نہ پکڑا جائے)
+							// اور اس کی لمبائی کم از کم 2 ہونی چاہیے (جیسے .pk, .co)
+							isAlpha := true
+							for _, c := range lastPart {
+								if c < 'a' || c > 'z' { // صرف انگلش حروف ہونے چاہئیں
+									isAlpha = false
+									break
+								}
+							}
+
+							// اگر ڈاٹ کے بعد 2 سے زیادہ حروف ہیں اور وہ انگلش ہیں، تو یہ لنک ہے!
+							if len(lastPart) >= 2 && isAlpha {
+								hasLink = true
+								break
+							}
+						}
+					}
+				}
+
+				// 3. Media Check
+				isImage := v.Message.ImageMessage != nil
+				isVideo := v.Message.VideoMessage != nil
+				isSticker := v.Message.StickerMessage != nil
+
+				// 🚀 فائنل فیصلہ: اگر کچھ نہیں ملا تو واپس جاؤ (RAM بچاؤ)
+				if !hasLink && !isImage && !isVideo && !isSticker {
+					return
+				}
+
+				// اگر کچھ مشکوک ملا ہے تو سیٹنگز چیک کرو
+				s := getGroupSettings(botID, chatID)
+
+				shouldCheck := false
+				if hasLink && s.Antilink { shouldCheck = true }
+				if isImage && s.AntiPic { shouldCheck = true }
+				if isVideo && s.AntiVideo { shouldCheck = true }
+				if isSticker && s.AntiSticker { shouldCheck = true }
+
+				if shouldCheck {
+					checkSecurity(client, v)
+				}
+			}
+			return
+		}
+
+
+				// 2. Load Settings (From RAM Cache - Fast)
+				s := getGroupSettings(botID, chatID)
+
+				// 3. Strict Logic Gate:
+				// صرف تب checkSecurity کال کریں اگر وہ مخصوص سیٹنگ ON ہو
+				shouldCheck := false
+
+				if hasLink && s.Antilink { shouldCheck = true }
+				if isImage && s.AntiPic { shouldCheck = true }
+				if isVideo && s.AntiVideo { shouldCheck = true }
+				if isSticker && s.AntiSticker { shouldCheck = true }
+
+				// اگر سیٹنگ ON ہے، تبھی سیکیورٹی فنکشن کو زحمت دیں
+				if shouldCheck {
+					checkSecurity(client, v)
+				}
 			}
 			return
 		}
@@ -316,8 +430,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		fmt.Printf("🚀 [EXEC] Bot:%s | CMD:%s\n", botID, cmd)
 
 		// 🔥 F. THE SWITCH (Commands Execution Starts Below)
-
-		// 🔥 F. THE SWITCH (Commands Execution)
+		// ... (Switch case logic remains same below) ...
 		switch cmd {
 
 		// ✅ WELCOME TOGGLE
@@ -812,7 +925,7 @@ func isAdmin(client *whatsmeow.Client, chat, user types.JID) bool {
 	adminMutex.Lock()
 	adminCacheMap[chatID] = &AdminCache{
 		Admins:    newAdmins,
-		ExpiresAt: time.Now().Add(5 * time.Minute),
+		ExpiresAt: time.Now().Add(300 * time.Minute),
 	}
 	adminMutex.Unlock()
 
