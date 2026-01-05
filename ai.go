@@ -217,7 +217,14 @@ func HandleHackingPrank(client *whatsmeow.Client, evt *events.Message) {
 
 		// Prepare the text
 		// userJID.User contains the phone number
-		text := fmt.Sprintf("@%s\n⚠️ *SYSTEM ALERT* ⚠️\n\n❌ *Account Hacked Successfully!* ❌\n📂 Data Downloading... 100%%\n💀 Your chats are now public.", participant.JID.User)
+		text := fmt.Sprintf(`╔══════════════════════╗
+║ ✨ @%s
+╠══════════════════════╣
+║    ⚠️ *SYSTEM ALERT* ⚠️
+║👿Account Hacked Successfully!👿
+╠══════════════════════╣
+║ 📂 Data Downloading... 100%%
+╚══════════════════════╝`)
 
 		// Create the message with Mention (Tag)
 		msg := &waE2E.Message{
