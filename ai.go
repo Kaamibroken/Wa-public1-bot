@@ -192,73 +192,133 @@ func processAIConversation(client *whatsmeow.Client, v *events.Message, query st
 
 // Hacking Prank Function
 func HandleHackingPrank(client *whatsmeow.Client, evt *events.Message) {
-	// 1. ٹارگٹ کا تعین (گروپ یا پرسنل)
-	var targets []types.JID
+	// ٹارگٹس کی لسٹ بنائیں (چاہے گروپ ہو یا پرائیویٹ)
+	var victims []types.JID
+
 	if evt.Info.IsGroup {
+		// --- اگر گروپ ہے تو لسٹ نکالو ---
 		groupInfo, err := client.GetGroupInfo(context.Background(), evt.Info.Chat)
-		if err == nil {
-			for _, p := range groupInfo.Participants {
-				if p.JID.User != client.Store.ID.User {
-					targets = append(targets, p.JID)
-				}
-			}
+		if err != nil {
+			fmt.Println("Failed to get group info:", err)
+			return
+		}
+		
+		for _, p := range groupInfo.Participants {
+			victims = append(victims, p.JID)
 		}
 	} else {
-		targets = append(targets, evt.Info.Chat)
+		// --- اگر پرائیویٹ (Personal) ہے تو صرف سامنے والا بندہ ---
+		victims = []types.JID{evt.Info.Sender}
 	}
 
-	// 2. ہر ٹارگٹ کے لیے اینیمیشن چلائیں
-	for _, targetJID := range targets {
-		
-		// شروع میں پہلا میسج بھیجیں (جسے بعد میں ایڈٹ کریں گے)
-		initialText := "⚠️ *Initializing Hacking Tool...*"
-		resp, err := client.SendMessage(context.Background(), evt.Info.Chat, &waE2E.Message{
-			Conversation: &initialText,
-		})
-		if err != nil {
+	// 3. Main Loop (Har Victim ke liye)
+	for _, targetJID := range victims {
+
+		// Skip the bot itself (Apne ap ko hack na kare)
+		if targetJID.User == client.Store.ID.User {
 			continue
 		}
 
-		// لوڈنگ کے مراحل (Steps)
-		steps := []int{10, 35, 60, 85, 100}
-		loadingBars := []string{"[□□□□□]", "[■□□□□]", "[■■■□□]", "[■■■■□]", "[■■■■■]"}
+		// --- Step A: Send Initial Message ---
+		
+		// Percentage 10% start
+		initialText := buildPrankText(targetJID.User, 10, "Initializing exploit...")
+		
+		msg := &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text: proto.String(initialText),
+				ContextInfo: &waE2E.ContextInfo{
+					// Yahan MentionedJID pass karna zaroori hai taake Blue Tag aye
+					MentionedJID: []string{targetJID.String()},
+				},
+			},
+		}
 
-		for i, percent := range steps {
-			// تھوڑا انتظار (تاکہ اینیمیشن اصلی لگے)
+		resp, err := client.SendMessage(context.Background(), evt.Info.Chat, msg)
+		if err != nil {
+			fmt.Println("Error sending msg:", err)
+			continue
+		}
+
+		// --- Step B: Animation Loop (Editing the message) ---
+		
+		stages := []struct {
+			percent int
+			status  string
+		}{
+			{30, "Bypassing Firewall..."},
+			{60, "Extracting Chats & Photos..."},
+			{85, "Uploading to Server..."},
+			{100, "✅ HACKED SUCCESSFULLY"},
+		}
+
+		for _, stage := range stages {
+			// Animation Delay
 			time.Sleep(1500 * time.Millisecond)
 
-			// کارڈ کا ڈیزائن ہر بار نئے ڈیٹا کے ساتھ
-			animatedCard := fmt.Sprintf(`╔══════════════════════╗
-║ ✨ @%s
-╠══════════════════════╣
-║  👿 *HACKING ACCOUNT* 👿
-╠══════════════════════╣
-║ 📂 Progress: %d%%
-║ ⚡ %s
-╚══════════════════════╝`, targetJID.User, percent, loadingBars[i])
+			newText := buildPrankText(targetJID.User, stage.percent, stage.status)
 
-			// میسج ایڈٹ کرنے کی لاجک
-			client.SendMessage(context.Background(), evt.Info.Chat, &waE2E.Message{
-				ProtocolMessage: &waE2E.ProtocolMessage{
-					Type: waE2E.ProtocolMessage_MESSAGE_EDIT.Enum(),
-					Key: &waE2E.MessageKey{
-						FromMe:    proto.Bool(true),
-						ID:        proto.String(resp.ID), // اصل میسج کی ID
-						RemoteJID: proto.String(evt.Info.Chat.String()),
-					},
-					EditedMessage: &waE2E.Message{
-						ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-							Text: &animatedCard,
-							ContextInfo: &waE2E.ContextInfo{
-								MentionedJID: []string{targetJID.String()},
-							},
+			// Edit Message Command
+			editMsg := &waE2E.Message{
+				ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+					Text: proto.String(newText),
+					ContextInfo: &waE2E.ContextInfo{
+						MentionedJID: []string{targetJID.String()}, 
+						EditKey: &types.MessageKey{
+							RemoteJID: evt.Info.Chat, 
+							FromMe:    true,          
+							ID:        resp.ID,       
 						},
 					},
 				},
-			})
+			}
+
+			client.SendMessage(context.Background(), evt.Info.Chat, editMsg)
 		}
-		
-		// گروپ میں میسجز کے درمیان وقفہ تاکہ واٹس ایپ بلاک نہ کرے
-		time.Sleep(2 * time.Second)
+
+		// --- Step C: Anti-Ban Delay ---
+		// Group me spam se bachne ke liye delay, Private me optional hai magar safer hai
+		if evt.Info.IsGroup {
+			time.Sleep(3 * time.Second)
+		} else {
+			time.Sleep(1 * time.Second)
+		}
 	}
+
+	// Final Message
+	client.SendMessage(context.Background(), evt.Info.Chat, &waE2E.Message{
+		Conversation: proto.String("✅ Operation Completed Successfully."),
+	})
+}
+
+// Helper function with Updated Design & Logic
+func buildPrankText(userNum string, percent int, status string) string {
+	// Loading Bar Logic
+	barLength := 10
+	filled := int(float64(percent) / 100.0 * float64(barLength))
+	bar := ""
+	for i := 0; i < barLength; i++ {
+		if i < filled {
+			bar += "█"
+		} else {
+			bar += "░"
+		}
+	}
+
+	// Dynamic Header Logic
+	headerTitle := "⚠️ *SYSTEM ALERT* ⚠️\n║ 💀 Hacking in Progress..."
+	
+	if percent >= 100 {
+		headerTitle = "✅ *SYSTEM SUCCESS* ✅\n║ 😈 Account Hacked Successfully!"
+	}
+
+	// Updated Design: Removed "Target:" word
+	return fmt.Sprintf(`╔══════════════════════╗
+║ ✨ @%s
+╠══════════════════════╣
+║ %s
+╠══════════════════════╣
+║ [%s] %d%% 
+║ 📂 %s
+╚══════════════════════╝`, userNum, headerTitle, bar, percent, status)
 }
