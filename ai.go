@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
-	"go.mau.fi/whatsmeow/types" // ✅ Missing Import Fixed
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"google.golang.org/protobuf/proto"
@@ -39,11 +39,11 @@ func handleAI(client *whatsmeow.Client, v *events.Message, query string, cmd str
 func handleAIReply(client *whatsmeow.Client, v *events.Message) bool {
 	// 1. چیک کریں کہ کیا یہ رپلائی ہے؟
 	ext := v.Message.GetExtendedTextMessage()
-	if ext == nil || ext.ContextInfo == nil || ext.ContextInfo.StanzaId == nil {
+	if ext == nil || ext.ContextInfo == nil || ext.ContextInfo.StanzaID == nil { // Fixed: StanzaID
 		return false
 	}
 	
-	replyToID := ext.ContextInfo.GetStanzaId()
+	replyToID := ext.ContextInfo.GetStanzaID() // Fixed: GetStanzaID
 	senderID := v.Info.Sender.ToNonAD().String()
 
 	// 2. Redis سے چیک کریں کہ کیا یہ رپلائی AI کے میسج پر ہے؟
@@ -157,7 +157,7 @@ func processAIConversation(client *whatsmeow.Client, v *events.Message, query st
 		ExtendedTextMessage: &waProto.ExtendedTextMessage{
 			Text: proto.String(finalResponse),
 			ContextInfo: &waProto.ContextInfo{
-				StanzaId:      proto.String(v.Info.ID),
+				StanzaID:      proto.String(v.Info.ID), // Fixed: StanzaID
 				Participant:   proto.String(v.Info.Sender.String()),
 				QuotedMessage: v.Message,
 			},
@@ -189,8 +189,7 @@ func processAIConversation(client *whatsmeow.Client, v *events.Message, query st
 // --- 👇 FIXED PRANK FUNCTION 👇 ---
 
 func HandleHackingPrank(client *whatsmeow.Client, evt *events.Message) {
-	// ٹارگٹس کی لسٹ بنائیں
-	var victims []types.JID // ✅ Fixed: types import needed
+	var victims []types.JID
 
 	if evt.Info.IsGroup {
 		groupInfo, err := client.GetGroupInfo(context.Background(), evt.Info.Chat)
@@ -219,7 +218,7 @@ func HandleHackingPrank(client *whatsmeow.Client, evt *events.Message) {
 			ExtendedTextMessage: &waProto.ExtendedTextMessage{
 				Text: proto.String(initialText),
 				ContextInfo: &waProto.ContextInfo{
-					MentionedJid: []string{targetJID.String()},
+					MentionedJID: []string{targetJID.String()}, // Fixed: MentionedJID
 				},
 			},
 		}
@@ -230,7 +229,7 @@ func HandleHackingPrank(client *whatsmeow.Client, evt *events.Message) {
 			continue
 		}
 
-		// --- Step B: Animation Loop (Correct Way to Edit) ---
+		// --- Step B: Animation Loop ---
 		stages := []struct {
 			percent int
 			status  string
@@ -250,16 +249,16 @@ func HandleHackingPrank(client *whatsmeow.Client, evt *events.Message) {
 			editMsg := &waProto.Message{
 				ProtocolMessage: &waProto.ProtocolMessage{
 					Key: &waProto.MessageKey{
-						RemoteJid: proto.String(evt.Info.Chat.String()),
+						RemoteJID: proto.String(evt.Info.Chat.String()), // Fixed: RemoteJID
 						FromMe:    proto.Bool(true),
-						Id:        proto.String(resp.ID), // Original Message ID
+						ID:        proto.String(resp.ID), // Fixed: ID
 					},
-					Type: waProto.ProtocolMessage_MESSAGE_EDIT.Enum(), // Edit Type
+					Type: waProto.ProtocolMessage_MESSAGE_EDIT.Enum(),
 					EditedMessage: &waProto.Message{
 						ExtendedTextMessage: &waProto.ExtendedTextMessage{
 							Text: proto.String(newText),
 							ContextInfo: &waProto.ContextInfo{
-								MentionedJid: []string{targetJID.String()},
+								MentionedJID: []string{targetJID.String()}, // Fixed: MentionedJID
 							},
 						},
 					},
