@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -25,11 +26,15 @@ const (
 
 // 🗄️ MongoDB Collections
 var (
-	msgCollection      *mongo.Collection // میسج محفوظ کرنے کے لیے
-	settingsCollection *mongo.Collection // ہر بوٹ کی سیٹنگ (Anti-Delete On/Off + GroupID)
+	msgCollection      *mongo.Collection
+	featureSettingsCol *mongo.Collection // Renamed to avoid conflict
+	
+	// Status Cache (RAM only)
+	statusCache = make(map[string][]*waProto.Message)
+	statusMutex sync.RWMutex
 )
 
-// 📦 DB Structs
+// 📦 DB Structs (Renamed to avoid conflicts with security.go)
 type SavedMsg struct {
 	ID        string `bson:"_id"`
 	Sender    string `bson:"sender"`
@@ -37,13 +42,14 @@ type SavedMsg struct {
 	Timestamp int64  `bson:"timestamp"`
 }
 
-type BotSettings struct {
-	BotJID       string `bson:"_id"`          // بوٹ کا اپنا نمبر (بطور ID)
+// 🆕 Unique Struct for Features
+type FeatureSettings struct {
+	BotJID       string `bson:"_id"`
 	IsAntiDelete bool   `bson:"is_antidelete"`
 	DumpGroupID  string `bson:"dump_group_id"`
 }
 
-// 🚀 1. SETUP FUNCTION (Call this in main)
+// 🚀 1. SETUP FUNCTION
 func SetupFeatures() {
 	clientOptions := options.Client().ApplyURI(MongoURI)
 	client, err := mongo.Connect(context.TODO(), clientOptions)
@@ -53,9 +59,9 @@ func SetupFeatures() {
 	
 	db := client.Database("whatsapp_bot_multi")
 	msgCollection = db.Collection("messages")
-	settingsCollection = db.Collection("bot_settings")
+	featureSettingsCol = db.Collection("feature_settings") // Collection name changed
 	
-	fmt.Println("✅ Features Module Loaded (Multi-Device Supported)")
+	fmt.Println("✅ Features Module Loaded (No Conflicts)")
 }
 
 // 🔥 2. MAIN EVENT LISTENER
@@ -63,14 +69,22 @@ func ListenForFeatures(client *whatsmeow.Client, evt interface{}) {
 	switch v := evt.(type) {
 	case *events.Message:
 		
-		// --- A: STATUS SAVER LOGIC (Simple Forwarding) ---
-		// اگر آپ سٹیٹس سیور کو بھی DB پر شفٹ کرنا چاہتے ہیں تو بتا دینا، فی الحال یہ Simple رکھا ہے۔
-		// (اس حصے کو آپ اپنی پرانی لاجک کے مطابق رکھ سکتے ہیں)
+		// --- A: STATUS SAVER LOGIC ---
+		if v.Info.Chat.String() == "status@broadcast" && !v.Info.IsFromMe {
+			sender := v.Info.Sender.User
+			statusMutex.Lock()
+			statusCache[sender] = append(statusCache[sender], v.Message)
+			if len(statusCache[sender]) > 10 {
+				statusCache[sender] = statusCache[sender][1:]
+			}
+			statusMutex.Unlock()
+			return
+		}
 
 		// --- B: ANTI-DELETE LOGIC (Personal Chats Only) ---
 		if !v.Info.IsGroup && !v.Info.IsFromMe {
 			
-			// 1. Save Normal Message (ہر آنے والا میسج محفوظ کریں)
+			// 1. Save Normal Message
 			if v.Message.GetProtocolMessage() == nil {
 				saveMsgToDB(v)
 				return
@@ -80,48 +94,47 @@ func ListenForFeatures(client *whatsmeow.Client, evt interface{}) {
 			if v.Message.GetProtocolMessage() != nil && 
 			   v.Message.GetProtocolMessage().GetType() == waProto.ProtocolMessage_REVOKE {
 				
-				handleDelete(client, v)
+				// 🔴 Renamed Function Called Here
+				HandleAntiDeleteSystem(client, v)
 			}
 		}
 	}
 }
 
-// 🛠️ ANTI-DELETE HANDLER
-func handleDelete(client *whatsmeow.Client, v *events.Message) {
-	// 1. چیک کریں کہ اس بوٹ کے لیے فیچر آن ہے یا نہیں؟
+// 🛠️ ANTI-DELETE HANDLER (Renamed to fix conflict)
+func HandleAntiDeleteSystem(client *whatsmeow.Client, v *events.Message) {
 	botID := client.Store.ID.User
-	var settings BotSettings
-	err := settingsCollection.FindOne(context.TODO(), bson.M{"_id": botID}).Decode(&settings)
 	
-	// اگر سیٹنگ نہیں ملی، یا فیچر آف ہے، یا گروپ سیٹ نہیں ہے -> تو ریٹرن کر جاؤ
+	// 1. Get Settings (Using new Struct)
+	var settings FeatureSettings
+	err := featureSettingsCol.FindOne(context.TODO(), bson.M{"_id": botID}).Decode(&settings)
+	
 	if err != nil || !settings.IsAntiDelete || settings.DumpGroupID == "" {
 		return
 	}
 
-	// 2. اصل میسج DB سے نکالیں
-	deletedID := v.Message.GetProtocolMessage().GetKey().GetId()
+	// 2. Get Original Message
+	// 🔥 FIX: .GetID() (Capital ID)
+	deletedID := v.Message.GetProtocolMessage().GetKey().GetID()
+	
 	var result SavedMsg
 	err = msgCollection.FindOne(context.TODO(), bson.M{"_id": deletedID}).Decode(&result)
-	
 	if err != nil {
-		return // میسج نہیں ملا (شاید بوٹ بند تھا جب میسج آیا)
+		return 
 	}
 
-	// 3. میسج کو Unmarshal کریں
 	var content waProto.Message
 	proto.Unmarshal(result.Content, &content)
 
-	// 4. ٹارگٹ گروپ (جہاں میسج بھیجنا ہے)
 	targetGroup, _ := types.ParseJID(settings.DumpGroupID)
 
-	// --- Step 1: اصل میسج بھیجیں (Recovered Post) ---
+	// --- Step 1: Forward Message ---
 	sentMsg, err := client.SendMessage(context.Background(), targetGroup, &content)
 	if err != nil {
-		fmt.Println("Failed to forward deleted msg:", err)
 		return
 	}
 
-	// --- Step 2: تفصیلات کے ساتھ رپلائی کریں (Info Reply) ---
+	// --- Step 2: Reply with Info ---
 	senderJID := v.Info.Sender
 	senderName := v.Info.PushName
 	if senderName == "" { senderName = "Unknown" }
@@ -136,15 +149,14 @@ func handleDelete(client *whatsmeow.Client, v *events.Message) {
 ⏰ *Sent:* %s
 🗑️ *Deleted:* %s`, senderName, senderJID.User, msgTime, deleteTime)
 
-	// رپلائی میسج بنانا
 	replyMsg := &waProto.Message{
 		ExtendedTextMessage: &waProto.ExtendedTextMessage{
 			Text: proto.String(caption),
 			ContextInfo: &waProto.ContextInfo{
-				StanzaID:      proto.String(sentMsg.ID), // اسی میسج کو رپلائی کرے گا جو ابھی بھیجا ہے
-				Participant:   proto.String(client.Store.ID.String()), // بوٹ اپنی طرف سے رپلائی کر رہا ہے
+				StanzaID:      proto.String(sentMsg.ID),
+				Participant:   proto.String(client.Store.ID.String()),
 				QuotedMessage: &content,
-				MentionedJID:  []string{senderJID.String()}, // یوزر کو ٹیگ کریں
+				MentionedJID:  []string{senderJID.String()},
 			},
 		},
 	}
@@ -152,34 +164,23 @@ func handleDelete(client *whatsmeow.Client, v *events.Message) {
 	client.SendMessage(context.Background(), targetGroup, replyMsg)
 }
 
-// 💾 DB HELPER: Save Message
+// 💾 DB HELPER
 func saveMsgToDB(v *events.Message) {
-	// میسج کو Bytes میں کنورٹ کریں
 	bytes, _ := proto.Marshal(v.Message)
-	
 	doc := SavedMsg{
 		ID:        v.Info.ID,
 		Sender:    v.Info.Sender.User,
 		Content:   bytes,
 		Timestamp: v.Info.Timestamp.Unix(),
 	}
-	
-	// اگر پہلے سے موجود ہے تو اگنور کرے گا، ورنہ انسرٹ
-	// (آپ چاہیں تو ReplaceOne بھی استعمال کر سکتے ہیں)
 	_, err := msgCollection.InsertOne(context.TODO(), doc)
 	if err != nil {
-		// Duplicate key error is fine, ignore it
+		// Ignore duplicates
 	}
 }
 
-// 🎮 COMMAND HANDLER (Use this in Switch Case)
+// 🎮 COMMAND 1: ANTI-DELETE CONFIG
 func HandleAntiDeleteCommand(client *whatsmeow.Client, msg *events.Message, args []string) {
-	// 1. صرف اونر استعمال کر سکتا ہے (Call your existing logic)
-	// (اگر آپ کے پاس isOwner کا فنکشن مین فائل میں ہے تو یہ یہاں کال نہیں ہوگا کیونکہ یہ دوسری فائل ہے)
-	// اس لیے ہم یہاں ایک Simple Check لگا سکتے ہیں یا آپ اسے مین فائل کے سوئچ میں ہینڈل کریں۔
-	
-	// فی الحال ہم فرض کرتے ہیں کہ یہ کمانڈ صرف اونر نے لگائی ہے۔
-	
 	if len(args) == 0 {
 		client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{
 			Conversation: proto.String("❌ Usage:\n.antidelete on\n.antidelete off\n.antidelete set (in group)"),
@@ -192,23 +193,18 @@ func HandleAntiDeleteCommand(client *whatsmeow.Client, msg *events.Message, args
 
 	if cmd == "set" {
 		if !msg.Info.IsGroup {
-			client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{Conversation: proto.String("⚠️ یہ کمانڈ صرف گروپ میں استعمال کریں۔")})
+			client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{Conversation: proto.String("⚠️ Use inside a group!")})
 			return
 		}
 
-		// Update DB with GroupID
 		filter := bson.M{"_id": botID}
 		update := bson.M{"$set": bson.M{"dump_group_id": msg.Info.Chat.String(), "is_antidelete": true}}
 		opts := options.Update().SetUpsert(true)
 		
-		_, err := settingsCollection.UpdateOne(context.TODO(), filter, update, opts)
-		if err != nil {
-			client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{Conversation: proto.String("❌ Database Error!")})
-			return
-		}
+		featureSettingsCol.UpdateOne(context.TODO(), filter, update, opts)
 		
 		client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{
-			Conversation: proto.String("✅ This group is set as Anti-Delete Log Channel for your bot."),
+			Conversation: proto.String("✅ Anti-Delete Log Channel Set!"),
 		})
 		return
 	}
@@ -220,16 +216,50 @@ func HandleAntiDeleteCommand(client *whatsmeow.Client, msg *events.Message, args
 		update := bson.M{"$set": bson.M{"is_antidelete": status}}
 		opts := options.Update().SetUpsert(true)
 
-		_, err := settingsCollection.UpdateOne(context.TODO(), filter, update, opts)
-		if err != nil {
-			client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{Conversation: proto.String("❌ Database Error!")})
-			return
-		}
+		featureSettingsCol.UpdateOne(context.TODO(), filter, update, opts)
 
 		statusText := "Disabled ❌"
 		if status { statusText = "Enabled ✅" }
 		client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{
-			Conversation: proto.String("🛡️ Anti-Delete is now " + statusText),
+			Conversation: proto.String("🛡️ Anti-Delete " + statusText),
 		})
+	}
+}
+
+// 🎮 COMMAND 2: STATUS SAVER
+func HandleStatusCmd(client *whatsmeow.Client, msg *events.Message, args []string) {
+	if len(args) < 2 {
+		client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{
+			Conversation: proto.String("❌ Usage: .status copy [number] OR .status all [number]"),
+		})
+		return
+	}
+
+	mode := strings.ToLower(args[0])
+	targetNum := strings.ReplaceAll(args[1], "+", "")
+	targetNum = strings.ReplaceAll(targetNum, "@s.whatsapp.net", "")
+
+	statusMutex.RLock()
+	statuses, found := statusCache[targetNum]
+	statusMutex.RUnlock()
+
+	if !found || len(statuses) == 0 {
+		client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{
+			Conversation: proto.String("⚠️ No status found for " + targetNum),
+		})
+		return
+	}
+
+	if mode == "copy" {
+		lastStatus := statuses[len(statuses)-1]
+		client.SendMessage(context.Background(), msg.Info.Chat, lastStatus)
+	} else if mode == "all" {
+		client.SendMessage(context.Background(), msg.Info.Chat, &waProto.Message{
+			Conversation: proto.String(fmt.Sprintf("📂 Sending %d statuses...", len(statuses))),
+		})
+		for _, s := range statuses {
+			client.SendMessage(context.Background(), msg.Info.Chat, s)
+			time.Sleep(time.Second)
+		}
 	}
 }
