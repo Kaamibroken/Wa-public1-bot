@@ -118,7 +118,7 @@ func sendNativeFlow(client *whatsmeow.Client, evt *events.Message, title string,
 					// 🔥 Context Info (Quoted Message)
 					// یہ سب سے اہم ہے۔ یہ واٹس ایپ کو مجبور کرتا ہے کہ میسج رینڈر کرے۔
 					ContextInfo: &waE2E.ContextInfo{
-						StanzaId:      proto.String(evt.Info.ID),
+						StanzaID:      proto.String(evt.Info.ID),
 						Participant:   proto.String(evt.Info.Sender.String()),
 						QuotedMessage: evt.Message,
 					},
