@@ -64,18 +64,18 @@ func HandleButtonCommands(client *whatsmeow.Client, evt *events.Message) {
 }
 
 // ---------------------------------------------------------
-// 👇 HELPER FUNCTION (WITH FULL CONSOLE LOGGING)
+// 👇 HELPER FUNCTION (FIXED + FULL LOGGING)
 // ---------------------------------------------------------
 
 func sendNativeFlow(client *whatsmeow.Client, evt *events.Message, title string, body string, btnName string, params interface{}) {
 	
-	// 1. JSON Debugging
+	// 1. JSON Logging
 	jsonBytes, err := json.Marshal(params)
 	if err != nil {
 		fmt.Printf("❌ JSON Error: %v\n", err)
 		return
 	}
-	fmt.Printf("📦 Generated JSON: %s\n", string(jsonBytes)) // پرنٹ کریں کہ JSON کیسا بنا ہے
+	fmt.Printf("📦 Generated JSON: %s\n", string(jsonBytes))
 
 	// 2. Button Structure
 	buttons := []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
@@ -85,7 +85,7 @@ func sendNativeFlow(client *whatsmeow.Client, evt *events.Message, title string,
 		},
 	}
 
-	// 3. Message Structure (Native Flow + ContextInfo)
+	// 3. Message Structure (With ContextInfo & FutureProof & FIX)
 	msg := &waE2E.Message{
 		ViewOnceMessage: &waE2E.FutureProofMessage{
 			Message: &waE2E.Message{
@@ -101,14 +101,17 @@ func sendNativeFlow(client *whatsmeow.Client, evt *events.Message, title string,
 						Text: proto.String("🤖 Impossible Bot Debugger"),
 					},
 					
+					// ✅ Wrapper with ALL mandatory fields
 					InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
 						NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
 							Buttons:           buttons,
-							MessageParamsJSON: proto.String("{}"), // بعض اوقات خالی JSON ضروری ہوتا ہے
+							// 🛑 THE MISSING KEY FIX 🛑
+							MessageParamsJSON: proto.String("{}"), 
 							MessageVersion:    proto.Int32(3),
 						},
 					},
 
+					// 🔥 Context Info (Forcing Render)
 					ContextInfo: &waE2E.ContextInfo{
 						StanzaID:      proto.String(evt.Info.ID),
 						Participant:   proto.String(evt.Info.Sender.String()),
@@ -119,17 +122,17 @@ func sendNativeFlow(client *whatsmeow.Client, evt *events.Message, title string,
 		},
 	}
 
-	// 4. Send & Print Raw Response
+	// 4. Send & Print Raw Response (Old Style Logging)
 	fmt.Println("📡 Sending message to WhatsApp Server...")
 	resp, err := client.SendMessage(context.Background(), evt.Info.Chat, msg)
 	
 	if err != nil {
 		fmt.Printf("❌ CRITICAL ERROR: %v\n", err)
 	} else {
-		// 🔥🔥🔥 HERE IS THE RAW CONSOLE PRINT 🔥🔥🔥
+		// 🔥 RAW RESPONSE DUMP 🔥
 		fmt.Printf("✅ SUCCESS! Server Response:\n")
 		fmt.Printf("🆔 ID: %s\n", resp.ID)
 		fmt.Printf("🕒 Timestamp: %v\n", resp.Timestamp)
-		fmt.Printf("💾 Full Dump: %+v\n", resp) // یہ لائن سب کچھ کھول کر دکھا دے گی
+		fmt.Printf("💾 Full Dump: %+v\n", resp)
 	}
 }
