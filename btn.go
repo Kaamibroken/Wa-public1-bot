@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// 🎛️ MAIN SWITCH HANDLER (No Changes Here)
+// 🎛️ MAIN SWITCH HANDLER
 func HandleButtonCommands(client *whatsmeow.Client, evt *events.Message) {
 	text := evt.Message.GetConversation()
 	if text == "" {
@@ -98,7 +98,7 @@ func HandleButtonCommands(client *whatsmeow.Client, evt *events.Message) {
 }
 
 // ---------------------------------------------------------
-// 👇 HELPER FUNCTIONS (CRITICAL FIX FOR NativeFlowMessage)
+// 👇 HELPER FUNCTIONS (Cleaned & Error Free)
 // ---------------------------------------------------------
 
 type NativeButton struct {
@@ -112,43 +112,36 @@ func sendNativeFlow(client *whatsmeow.Client, jid types.JID, title string, body 
 	for _, btn := range buttons {
 		protoButtons = append(protoButtons, &waProto.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
 			Name:             proto.String(btn.Name),
-			ButtonParamsJSON: proto.String(btn.Params), // ✅ Correct Field Name
+			ButtonParamsJSON: proto.String(btn.Params),
 		})
 	}
 
-	// 2. میسج اسٹرکچر (The Research-Verified Fix)
-	// NativeFlowMessage کو "Wrapper Struct" میں ڈالنا ضروری ہے۔
-	// Wrapper کا نام ہمیشہ `_` (underscore) پر ختم ہوتا ہے۔
-	
+	// 2. میسج اسٹرکچر
+	// ❌ ViewOnceMessage ہٹا دیا گیا ہے تاکہ Compile Error نہ آئے
 	msg := &waProto.Message{
-		ViewOnceMessage: &waProto.ViewOnceMessage{
-			Message: &waProto.Message{
-				InteractiveMessage: &waProto.InteractiveMessage{
-					Header: &waProto.InteractiveMessage_Header{
-						Title:              proto.String(title),
-						HasMediaAttachment: proto.Bool(false),
-					},
-					Body: &waProto.InteractiveMessage_Body{
-						Text: proto.String(body),
-					},
-					Footer: &waProto.InteractiveMessage_Footer{
-						Text: proto.String("🤖 Impossible Bot Beta"),
-					},
-					
-					// 🛑 🛑 🛑 THE MAIN FIX 🛑 🛑 🛑
-					// ہم InteractiveMessage فیلڈ (جو کہ ایک انٹرفیس ہے) کو استعمال کر رہے ہیں
-					// اور اس کے اندر "InteractiveMessage_NativeFlowMessage_" والا سٹرکٹ پاس کر رہے ہیں۔
-					InteractiveMessage: &waProto.InteractiveMessage_NativeFlowMessage_{
-						NativeFlowMessage: &waProto.InteractiveMessage_NativeFlowMessage{
-							Buttons:        protoButtons,
-							MessageVersion: proto.Int32(3), // Version 3 is standard for 2025
-						},
-					},
+		InteractiveMessage: &waProto.InteractiveMessage{
+			Header: &waProto.InteractiveMessage_Header{
+				Title:              proto.String(title),
+				HasMediaAttachment: proto.Bool(false),
+			},
+			Body: &waProto.InteractiveMessage_Body{
+				Text: proto.String(body),
+			},
+			Footer: &waProto.InteractiveMessage_Footer{
+				Text: proto.String("🤖 Impossible Bot Beta"),
+			},
+			
+			// ✅ یہ Native Flow کا درست طریقہ ہے (Wrapper کے ساتھ)
+			InteractiveMessage: &waProto.InteractiveMessage_NativeFlowMessage_{
+				NativeFlowMessage: &waProto.InteractiveMessage_NativeFlowMessage{
+					Buttons:        protoButtons,
+					MessageVersion: proto.Int32(3),
 				},
 			},
 		},
 	}
 
+	// 3. سینڈ کریں
 	_, err := client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
 		fmt.Println("❌ Error sending buttons:", err)
