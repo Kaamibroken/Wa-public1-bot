@@ -134,37 +134,41 @@ type NativeButton struct {
 }
 
 func sendNativeFlow(client *whatsmeow.Client, jid types.JID, title string, body string, buttons []NativeButton) {
-	// بٹنز کو Proto فارمیٹ میں کنورٹ کریں
+	// 1. بٹنز کو Proto فارمیٹ میں کنورٹ کریں
 	var protoButtons []*waProto.InteractiveMessage_NativeFlowMessage_NativeFlowButton
 	for _, btn := range buttons {
 		protoButtons = append(protoButtons, &waProto.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
 			Name:             proto.String(btn.Name),
-			ButtonParamsJSON: proto.String(btn.Params), // ✅ FIX 2: Json -> JSON
+			ButtonParamsJSON: proto.String(btn.Params),
 		})
 	}
 
-	// میسج کا اسٹرکچر (ViewOnce کو ہٹا دیا ہے تاکہ ایرر نہ آئے)
+	// 2. میسج کا اسٹرکچر (Fixed Structure)
 	msg := &waProto.Message{
-		InteractiveMessage: &waProto.InteractiveMessage{
-			Header: &waProto.InteractiveMessage_Header{
-				Title:              proto.String(title),
-				HasMediaAttachment: proto.Bool(false),
-			},
-			Body: &waProto.InteractiveMessage_Body{
-				Text: proto.String(body),
-			},
-			Footer: &waProto.InteractiveMessage_Footer{
-				Text: proto.String("🤖 Impossible Bot Beta"),
-			},
-			// ✅ FIX 3: فیلڈ کا نام درست کیا
-			NativeFlowMessage: &waProto.InteractiveMessage_NativeFlowMessage{
-				Buttons:        protoButtons,
-				MessageVersion: proto.Int32(1),
+		ViewOnceMessage: &waProto.ViewOnceMessage{
+			Message: &waProto.Message{
+				InteractiveMessage: &waProto.InteractiveMessage{
+					Header: &waProto.InteractiveMessage_Header{
+						Title:              proto.String(title),
+						HasMediaAttachment: proto.Bool(false),
+					},
+					Body: &waProto.InteractiveMessage_Body{
+						Text: proto.String(body),
+					},
+					Footer: &waProto.InteractiveMessage_Footer{
+						Text: proto.String("🤖 Impossible Bot"),
+					},
+					// 🔴 FIX: یہاں درست فیلڈ استعمال ہو رہی ہے
+					InteractiveMessageNativeFlow: &waProto.InteractiveMessage_NativeFlowMessage{
+						Buttons:        protoButtons,
+						MessageVersion: proto.Int32(1),
+					},
+				},
 			},
 		},
 	}
 
-	// سینڈ کریں
+	// 3. سینڈ کریں
 	_, err := client.SendMessage(context.Background(), jid, msg)
 	if err != nil {
 		fmt.Println("❌ Error sending buttons:", err)
