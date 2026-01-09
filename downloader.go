@@ -42,77 +42,106 @@ func sendPremiumCard(client *whatsmeow.Client, v *events.Message, title, site, i
 
 
 // 🚀 ہیوی ڈیوٹی میڈیا انجن (The Scientific Power)
+// 🚀 ہیوی ڈیوٹی میڈیا انجن (Updated with Splitter & Real Names)
 func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode string, optionalFormat ...string) {
 	fmt.Printf("\n⚙️ [DOWNLOADER START] Target: %s | Mode: %s\n", ytUrl, mode)
 	react(client, v.Info.Chat, v.Info.ID, "⏳")
 
-	// 1. فائل کا نام اور فارمیٹ سیٹنگ
-	fileName := fmt.Sprintf("temp_%d", time.Now().UnixNano())
+	// 1️⃣ سب سے پہلے ویڈیو کا اصلی ٹائٹل نکالیں (تاکہ temp نام نہ شو ہو)
+	fmt.Println("🔍 Fetching Title...")
+	cmdTitle := exec.Command("yt-dlp", "--get-title", "--no-playlist", ytUrl)
+	titleOut, err := cmdTitle.Output()
 	
-	// ریلوے کے ریسورسز کا فائدہ اٹھانے کے لیے بہترین کوالٹی سلیکٹ کریں
+	cleanTitle := "Media_File" // ڈیفالٹ نام اگر ٹائٹل نہ ملے
+	if err == nil && len(titleOut) > 0 {
+		cleanTitle = strings.TrimSpace(string(titleOut))
+		// واٹس ایپ کے لیے نام صاف کریں (غیر ضروری نشانات ہٹا دیں)
+		cleanTitle = strings.ReplaceAll(cleanTitle, "/", "-")
+		cleanTitle = strings.ReplaceAll(cleanTitle, "\\", "-")
+		cleanTitle = strings.ReplaceAll(cleanTitle, "\"", "'")
+	}
+
+	// 2️⃣ فائل کا عارضی نام (Server کے لیے temp ہی رکھیں تاکہ safe رہے)
+	tempFileName := fmt.Sprintf("temp_%d", time.Now().UnixNano())
+	
+	// فارمیٹ سلیکشن
 	formatArg := "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
 	if len(optionalFormat) > 0 && optionalFormat[0] != "" {
 		formatArg = optionalFormat[0]
 	}
 
 	var args []string
+	finalExt := ".mp4"
+
 	if mode == "audio" {
-		fileName += ".mp3"
+		tempFileName += ".mp3"
+		finalExt = ".mp3"
 		args = []string{
 			"--no-playlist", 
 			"-f", "bestaudio", 
 			"--extract-audio", 
 			"--audio-format", "mp3", 
-			"--max-filesize", "1900M", // 2GB واٹس ایپ کی لمٹ ہے، سیفٹی کے لیے 1.9GB رکھا
-			"-o", fileName, 
+			// ⚠️ نوٹ: ڈاؤنلوڈر کو 2GB لمٹ نہ دیں، اسے ڈاؤن لوڈ کرنے دیں، ہم خود سپلٹ کریں گے
+			"-o", tempFileName, 
 			ytUrl,
 		}
 	} else {
-		fileName += ".mp4"
+		tempFileName += ".mp4"
 		args = []string{
 			"--no-playlist", 
 			"-f", formatArg, 
 			"--merge-output-format", "mp4", 
-			"--max-filesize", "1900M", // 2GB لمٹ
-			"-o", fileName, 
+			"-o", tempFileName, 
 			ytUrl,
 		}
 	}
 
-	// 2. کمانڈ چلائیں
-	fmt.Printf("🛠️ [SYSTEM CMD] Executing yt-dlp for: %s\n", fileName)
+	// 3️⃣ ڈاؤن لوڈنگ شروع
+	fmt.Printf("🛠️ [SYSTEM CMD] Downloading: %s\n", cleanTitle)
 	cmd := exec.Command("yt-dlp", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("❌ [ERROR] yt-dlp failed: %v\nLOG: %s\n", err, string(output))
-		replyMessage(client, v, "❌ Media processing failed or file too large (>2GB).")
+		replyMessage(client, v, "❌ Media processing failed.")
 		return
 	}
 
-	// 3. فائل کو میموری (RAM) میں لوڈ کریں
-	// چونکہ آپ کے پاس 32GB ریم ہے، ہم پوری فائل ریم میں لوڈ کر سکتے ہیں تاکہ سپیڈ تیز ہو۔
-	fileData, err := os.ReadFile(fileName)
+	// 4️⃣ فائل سائز چیک کریں
+	fileInfo, err := os.Stat(tempFileName)
 	if err != nil {
-		fmt.Println("❌ File read error:", err)
+		fmt.Println("❌ File missing:", err)
 		return
 	}
-	defer os.Remove(fileName) // فنکشن ختم ہونے پر فائل ڈیلیٹ
-
-	fileSize := uint64(len(fileData))
-	fmt.Printf("📦 File Size Loaded in RAM: %.2f MB\n", float64(fileSize)/1024/1024)
+	fileSize := fileInfo.Size()
+	
+	fmt.Printf("📦 File Size: %.2f MB\n", float64(fileSize)/(1024*1024))
 
 	// ======================================================
-	// 🧠 SMART DECISION ENGINE (The Magic Part)
+	// ✂️ SPLIT LOGIC ADDED HERE (For Files > 1.5 GB)
 	// ======================================================
 	
+	const SplitLimit = 1500 * 1024 * 1024 // 1.5 GB
+
+	if fileSize > SplitLimit {
+		replyMessage(client, v, fmt.Sprintf("⚠️ *File is Huge!* (%.2f GB)\n✂️ Splitting into parts...", float64(fileSize)/(1024*1024*1024)))
+		// cleanTitle پاس کریں تاکہ پارٹس کے نام بھی اصلی ہوں
+		splitAndSend(client, v, tempFileName, cleanTitle+finalExt, SplitLimit)
+		return
+	}
+
+	// اگر فائل 1.5GB سے چھوٹی ہے تو نارمل پروسیس
+	
+	// ریم میں لوڈ کریں
+	fileData, err := os.ReadFile(tempFileName)
+	if err != nil { return }
+	defer os.Remove(tempFileName) // صفائی
+
+	// 🧠 SMART DECISION (Document vs Video)
 	var mType whatsmeow.MediaType
 	forceDocument := false
 
-	// اگر فائل 90MB سے بڑی ہے تو اسے زبردستی Document بنا دو
-	// کیونکہ بڑی ویڈیو اکثر واٹس ایپ ٹائم آؤٹ کر دیتا ہے
-	if fileSize > 90*1024*1024 { // 90 MB
+	if fileSize > 90*1024*1024 { // 90 MB سے اوپر ہمیشہ ڈاکومنٹ
 		forceDocument = true
-		fmt.Println("🚀 Large file detected! Switching to DOCUMENT mode for stability.")
 	}
 
 	if mode == "audio" || forceDocument {
@@ -121,48 +150,45 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 		mType = whatsmeow.MediaVideo
 	}
 
-	// 4. اپلوڈ (Upload)
-	// سیاق و سباق (Context) میں ٹائم آؤٹ بڑھا دیں کیونکہ بڑی فائل ہے
+	// اپلوڈ
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute) 
 	defer cancel()
 
 	up, err := client.Upload(ctx, fileData, mType)
 	if err != nil {
-		fmt.Printf("❌ Upload failed: %v\n", err)
-		replyMessage(client, v, "❌ Failed to upload to WhatsApp (Network Timeout).")
+		replyMessage(client, v, "❌ Upload Failed (Network Timeout).")
 		return
 	}
 
-	// 5. میسج بھیجنا
+	// 5️⃣ میسج بھیجنا (Professional Name Logic)
 	var finalMsg waProto.Message
 
-	// اگر موڈ آڈیو ہے یا ہم نے زبردستی ڈاکومنٹ بنایا ہے (بڑی موویز کے لیے)
 	if mode == "audio" || forceDocument {
-		
-		// MIME ٹائپ سیٹ کریں تاکہ موبائل اسے صحیح پہچانے
 		mime := "application/octet-stream"
 		if mode == "audio" { mime = "audio/mpeg" }
-		if mode == "video" { mime = "video/mp4" } // ڈاکومنٹ میں بھی ویڈیو پلے ہو جائے گی
+		if mode == "video" { mime = "video/mp4" }
 
 		finalMsg.DocumentMessage = &waProto.DocumentMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
 			Mimetype:      proto.String(mime),
-			FileName:      proto.String(fileName), // اصل نام تاکہ یوزر کو پتہ چلے
+			// 🔥 یہاں ہم نے temp نام ہٹا کر اصلی نام لگا دیا
+			FileName:      proto.String(cleanTitle + finalExt), 
+			Title:         proto.String(cleanTitle),
 			FileLength:    proto.Uint64(fileSize),
 			FileSHA256:    up.FileSHA256,
 			FileEncSHA256: up.FileEncSHA256,
-			Caption:       proto.String("✅ *Process Success*"),
+			Caption:       proto.String("✅ " + cleanTitle),
 		}
 	} else {
-		// چھوٹی ویڈیوز کے لیے نارمل ویڈیو میسج
+		// چھوٹی ویڈیوز کے لیے
 		finalMsg.VideoMessage = &waProto.VideoMessage{
 			URL:           proto.String(up.URL),
 			DirectPath:    proto.String(up.DirectPath),
 			MediaKey:      up.MediaKey,
 			Mimetype:      proto.String("video/mp4"),
-			Caption:       proto.String("✅ *Video Downloaded*"),
+			Caption:       proto.String("✅ " + cleanTitle),
 			FileLength:    proto.Uint64(fileSize),
 			FileSHA256:    up.FileSHA256,
 			FileEncSHA256: up.FileEncSHA256,
@@ -171,9 +197,6 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 
 	client.SendMessage(context.Background(), v.Info.Chat, &finalMsg)
 	react(client, v.Info.Chat, v.Info.ID, "✅")
-	
-	// میموری صاف کرنے کی کوشش (آپشنل، گو خود بھی کر لیتا ہے)
-	// debug.FreeOSMemory() 
 }
 
 // ------------------- تمام ہینڈلرز (بھرے ہوئے!) -------------------
