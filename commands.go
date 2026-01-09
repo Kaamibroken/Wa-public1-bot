@@ -138,7 +138,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 	}()
 
 	// ⚡ 2. Timestamp Check (Relaxed to 60s)
-	if time.Since(v.Info.Timestamp) > 1*time.Second {
+	if time.Since(v.Info.Timestamp) > 60*time.Second {
 		return
 	}
 
