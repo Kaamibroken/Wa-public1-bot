@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 	"sync"
+    "strconv"
     
     "go.mau.fi/whatsmeow"
 	"github.com/showwin/speedtest-go/speedtest"
@@ -253,6 +254,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		}
 
 		// 🔍 C. Session Checks (Reply Handling)
+		// 🔍 C. Session Checks (Reply Handling)
 		extMsg := v.Message.GetExtendedTextMessage()
 		if extMsg != nil && extMsg.ContextInfo != nil && extMsg.ContextInfo.StanzaID != nil {
 			qID := extMsg.ContextInfo.GetStanzaID()
@@ -262,16 +264,23 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 				handleSetupResponse(client, v)
 				return
 			}
-			// 2. YouTube Search Menu
-			if session, ok := ytCache[qID]; ok && session.BotLID == botID {
-				var idx int
-				n, _ := fmt.Sscanf(bodyClean, "%d", &idx)
-				if n > 0 && idx >= 1 && idx <= len(session.Results) {
-					delete(ytCache, qID)
-					handleYTDownloadMenu(client, v, session.Results[idx-1].Url)
-					return
-				}
-			}
+			
+            // 🔥 [NEW] Archive Movie Selection 🔥
+            // یہ چیک کرے گا کہ کیا رپلائی آرکائیو سرچ کا ہے؟
+            movieMutex.Lock()
+            _, isArchiveSearch := searchCache[senderID] // senderID وہی ہے جو اوپر define ہے
+            movieMutex.Unlock()
+
+            // اگر یوزر کی سرچ ہسٹری موجود ہے اور اس نے نمبر بھیجا ہے
+            if isArchiveSearch {
+                 // چیک کریں کہ میسج صرف نمبر ہے
+                if _, err := strconv.Atoi(bodyClean); err == nil {
+                    // اس نمبر کو ہینڈل کرنے کے لیے مووی فنکشن کو بھیجیں
+                    go handleArchive(client, v, bodyClean)
+                    return
+                }
+            }
+
 			// 3. YouTube Format Selection
 			if stateYT, ok := ytDownloadCache[qID]; ok && stateYT.BotLID == botID {
 				delete(ytDownloadCache, qID)
