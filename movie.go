@@ -33,18 +33,20 @@ var searchCache = make(map[string][]MovieResult)
 // ⚠️ ہم نے نام تبدیل کر دیا تاکہ main.go والی cacheMutex سے ٹکراؤ نہ ہو
 var movieMutex sync.Mutex 
 
-// Archive API Response Structures
+// Archive API Response Structures (Flexible Types)
 type IAHeader struct {
-	Identifier string `json:"identifier"`
-	Title      string `json:"title"`
-	Year       string `json:"year"`
-	Downloads  int    `json:"downloads"`
+	Identifier string      `json:"identifier"`
+	Title      string      `json:"title"`
+	Year       interface{} `json:"year"`      // Can be string or int
+	Downloads  interface{} `json:"downloads"` // Can be string or int
 }
+
 type IAResponse struct {
 	Response struct {
 		Docs []IAHeader `json:"docs"`
 	} `json:"response"`
 }
+
 type IAMetadata struct {
 	Files []struct {
 		Name   string `json:"name"`
@@ -89,22 +91,34 @@ func handleArchive(client *whatsmeow.Client, v *events.Message, input string) {
 	go performSearch(client, v, input, senderJID)
 }
 
-// --- 🔍 Helper: Search Engine ---
+// --- 🔍 Helper: Search Engine (Fixed User-Agent) ---
 func performSearch(client *whatsmeow.Client, v *events.Message, query string, senderJID string) {
 	// Archive Advanced Search API
 	encodedQuery := url.QueryEscape(fmt.Sprintf("title:(%s) AND mediatype:(movies)", query))
 	apiURL := fmt.Sprintf("https://archive.org/advancedsearch.php?q=%s&fl[]=identifier&fl[]=title&fl[]=year&fl[]=downloads&sort[]=downloads+desc&output=json&rows=10", encodedQuery)
 
-	resp, err := http.Get(apiURL)
+	// ✅ FIX: http.NewRequest استعمال کریں تاکہ ہیڈرز لگا سکیں
+	req, _ := http.NewRequest("GET", apiURL, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+	clientHttp := &http.Client{Timeout: 30 * time.Second}
+	resp, err := clientHttp.Do(req)
+	
 	if err != nil {
 		replyMessage(client, v, "❌ Search API Error.")
 		return
 	}
 	defer resp.Body.Close()
 
+	// ڈیبگنگ کے لیے: اگر سٹیٹس 200 نہیں ہے تو ایرر دیں
+	if resp.StatusCode != 200 {
+		replyMessage(client, v, fmt.Sprintf("❌ API Error: %d", resp.StatusCode))
+		return
+	}
+
 	var result IAResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		replyMessage(client, v, "❌ Data Parse Error.")
+		replyMessage(client, v, "❌ Data Parse Error (Invalid JSON).")
 		return
 	}
 
@@ -119,13 +133,24 @@ func performSearch(client *whatsmeow.Client, v *events.Message, query string, se
 	msgText := fmt.Sprintf("🎬 *Archive Results for:* '%s'\n\n", query)
 
 	for i, doc := range docs {
+		// ✅ Safe Conversion (Interface to String/Int)
+		yearStr := fmt.Sprintf("%v", doc.Year)
+		
+		dlCount := 0
+		switch val := doc.Downloads.(type) {
+		case float64:
+			dlCount = int(val)
+		case string:
+			dlCount, _ = strconv.Atoi(val)
+		}
+
 		movieList = append(movieList, MovieResult{
 			Identifier: doc.Identifier,
 			Title:      doc.Title,
-			Year:       doc.Year,
-			Downloads:  doc.Downloads,
+			Year:       yearStr,
+			Downloads:  dlCount,
 		})
-		msgText += fmt.Sprintf("*%d.* %s (%s)\n", i+1, doc.Title, doc.Year)
+		msgText += fmt.Sprintf("*%d.* %s (%s)\n", i+1, doc.Title, yearStr)
 	}
 	
 	msgText += "\n👇 *Reply with a number to download.*"
@@ -135,7 +160,7 @@ func performSearch(client *whatsmeow.Client, v *events.Message, query string, se
 	searchCache[senderJID] = movieList
 	movieMutex.Unlock()
 
-	// سادہ لسٹ بھیجیں (بغیر پریمیم کارڈ کے)
+	// لسٹ بھیجیں
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		ExtendedTextMessage: &waProto.ExtendedTextMessage{
 			Text: proto.String(msgText),
@@ -152,7 +177,14 @@ func performSearch(client *whatsmeow.Client, v *events.Message, query string, se
 func downloadFromIdentifier(client *whatsmeow.Client, v *events.Message, movie MovieResult) {
 	// Metadata API سے فائلز کی لسٹ لیں
 	metaURL := fmt.Sprintf("https://archive.org/metadata/%s", movie.Identifier)
-	resp, err := http.Get(metaURL)
+	
+	// ✅ FIX: Metadata Request میں بھی User-Agent لگائیں
+	req, _ := http.NewRequest("GET", metaURL, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	
+	clientHttp := &http.Client{Timeout: 30 * time.Second}
+	resp, err := clientHttp.Do(req)
+	
 	if err != nil { return }
 	defer resp.Body.Close()
 
@@ -163,7 +195,10 @@ func downloadFromIdentifier(client *whatsmeow.Client, v *events.Message, movie M
 	maxSize := int64(0)
 
 	for _, f := range meta.Files {
-		if strings.HasSuffix(strings.ToLower(f.Name), ".mp4") || strings.HasSuffix(strings.ToLower(f.Name), ".mkv") {
+		// فارمیٹ کلیننگ
+		fName := strings.ToLower(f.Name)
+		// ہم mp4 اور mkv کو ترجیح دیں گے، لیکن ogv/avi کو چھوڑ دیں گے اگر ممکن ہو
+		if strings.HasSuffix(fName, ".mp4") || strings.HasSuffix(fName, ".mkv") {
 			s, _ := strconv.ParseInt(f.Size, 10, 64)
 			if s > maxSize {
 				maxSize = s
@@ -179,7 +214,6 @@ func downloadFromIdentifier(client *whatsmeow.Client, v *events.Message, movie M
 
 	finalURL := fmt.Sprintf("https://archive.org/download/%s/%s", movie.Identifier, url.PathEscape(bestFile))
 	
-	// پریمیم کارڈ ہٹا دیا
 	replyMessage(client, v, fmt.Sprintf("🚀 *Downloading:* %s\n📦 *Please wait...*", movie.Title))
 	
 	go downloadFileDirectly(client, v, finalURL, movie.Title)
@@ -239,7 +273,7 @@ func downloadFileDirectly(client *whatsmeow.Client, v *events.Message, urlStr st
 	react(client, v.Info.Chat, v.Info.ID, "✅")
 }
 
-// ✅ یہ فنکشن اب واپس ایڈ کر دیا گیا ہے تاکہ ایرر نہ آئے
+// ✅ helper function
 func isNumber(s string) bool {
 	_, err := strconv.Atoi(s)
 	return err == nil
