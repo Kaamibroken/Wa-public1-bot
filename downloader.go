@@ -81,7 +81,6 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 			"-f", "bestaudio", 
 			"--extract-audio", 
 			"--audio-format", "mp3", 
-			// ⚠️ نوٹ: ڈاؤنلوڈر کو 2GB لمٹ نہ دیں، اسے ڈاؤن لوڈ کرنے دیں، ہم خود سپلٹ کریں گے
 			"-o", tempFileName, 
 			ytUrl,
 		}
@@ -176,7 +175,7 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 			// 🔥 یہاں ہم نے temp نام ہٹا کر اصلی نام لگا دیا
 			FileName:      proto.String(cleanTitle + finalExt), 
 			Title:         proto.String(cleanTitle),
-			FileLength:    proto.Uint64(fileSize),
+			FileLength:    proto.Uint64(uint64(fileSize)), // ✅ FIXED: Converted int64 to uint64
 			FileSHA256:    up.FileSHA256,
 			FileEncSHA256: up.FileEncSHA256,
 			Caption:       proto.String("✅ " + cleanTitle),
@@ -189,7 +188,7 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 			MediaKey:      up.MediaKey,
 			Mimetype:      proto.String("video/mp4"),
 			Caption:       proto.String("✅ " + cleanTitle),
-			FileLength:    proto.Uint64(fileSize),
+			FileLength:    proto.Uint64(uint64(fileSize)), // ✅ FIXED: Converted int64 to uint64
 			FileSHA256:    up.FileSHA256,
 			FileEncSHA256: up.FileEncSHA256,
 		}
@@ -198,6 +197,7 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 	client.SendMessage(context.Background(), v.Info.Chat, &finalMsg)
 	react(client, v.Info.Chat, v.Info.ID, "✅")
 }
+
 
 // ------------------- تمام ہینڈلرز (بھرے ہوئے!) -------------------
 
