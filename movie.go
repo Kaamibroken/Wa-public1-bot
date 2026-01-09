@@ -239,5 +239,8 @@ func downloadFileDirectly(client *whatsmeow.Client, v *events.Message, urlStr st
 	react(client, v.Info.Chat, v.Info.ID, "✅")
 }
 
-// نوٹ: isNumber, replyMessage, react, sendPremiumCard فنکشنز یہاں سے ڈیلیٹ کر دیے گئے ہیں 
-// کیونکہ وہ commands.go اور downloader.go میں پہلے سے موجود ہیں۔
+// ✅ یہ فنکشن اب واپس ایڈ کر دیا گیا ہے تاکہ ایرر نہ آئے
+func isNumber(s string) bool {
+	_, err := strconv.Atoi(s)
+	return err == nil
+}
