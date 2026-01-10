@@ -638,7 +638,12 @@ func handleGetStatuses(w http.ResponseWriter, r *http.Request) {
 // 🚀 8. Update Profile (Fixed Picture Upload)
 func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	// Parse Multipart Form (10MB Max)
-	r.ParseMultipartForm(10 << 20)
+	err := r.ParseMultipartForm(10 << 20)
+	if err != nil {
+		http.Error(w, "File too big", 400)
+		return
+	}
+
 	botID := r.FormValue("bot_id")
 	action := r.FormValue("action") // "picture" or "status"
 	
@@ -651,9 +656,9 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 1. Update Status (About)
 	if action == "status" {
 		newStatus := r.FormValue("text")
-		// ✅ SetStatusMessage is standard and usually stable
 		err := bot.SetStatusMessage(context.Background(), newStatus)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -663,6 +668,7 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 2. Update Profile Picture (DP)
 	if action == "picture" {
 		file, _, err := r.FormFile("file")
 		if err != nil {
@@ -671,16 +677,44 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		defer file.Close()
 		
-		// ✅ FIX: Read file but ignore variable to prevent "declared and not used" error
-		_, _ = io.ReadAll(file)
+		imgData, err := io.ReadAll(file)
+		if err != nil {
+			http.Error(w, "Read error", 500)
+			return
+		}
+
+		if bot.Store.ID == nil {
+			http.Error(w, "Bot not logged in", 400)
+			return
+		}
+
+		// ✅ LATEST LOGIC: SetProfilePicture
+		// JID کے ساتھ * لگانا ضروری ہے کیونکہ Store.ID ایک Pointer ہے
+		// اور فنکشن کو Value چاہیے ہوتی ہے۔
+		id, err := bot.SetProfilePicture(context.Background(), *bot.Store.ID, imgData)
 		
-		// ✅ FIX: Commented out unused JID to prevent error
-		// jid := bot.Store.ID
+		if err != nil { 
+			fmt.Printf("❌ Profile Pic Error: %v\n", err)
+			
+			// 🛠️ FALLBACK: اگر SetProfilePicture فیل ہو جائے (کچھ ورژنز میں)،
+			// تو ہم SetGroupPhoto استعمال کر سکتے ہیں (یہ بھی وہی کام کرتا ہے)
+			// اگر اوپر والا کوڈ چلے تو یہ نہیں چلے گا، یہ صرف بیک اپ ہے۔
+			if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
+				fmt.Println("⚠️ Trying Fallback: SetGroupPhoto for Self...")
+				id, err = bot.SetGroupPhoto(context.Background(), *bot.Store.ID, imgData)
+			}
+		}
+
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
 		
-		// 👇 Feature disabled temporarily due to library mismatch
-		fmt.Println("⚠️ SetProfilePicture API not found in this version. Skipping.")
-		
-		w.Write([]byte(`{"status":"skipped_due_to_version_mismatch"}`))
+		// Success Response
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "updated_picture", 
+			"id": id,
+		})
 		return
 	}
 }
