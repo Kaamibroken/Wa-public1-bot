@@ -541,6 +541,7 @@ type MediaItem struct {
 // 🔥 HELPER: Save Message to Mongo (Fixed Context)
 // Save Message to Mongo (optimized: text in messages, media in mediaCollection)
 // ⚡ UPDATED: Save Message to Mongo (Blocks Channels + Fixes LIDs)
+// ⚡ UPDATED: Save Message to Mongo (Strict Filtering + LID/Name Fix + Context Fix)
 func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJID types.JID, msg *waProto.Message, isFromMe bool, ts uint64) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -556,11 +557,12 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 	// 🚫 BLOCKING ZONE (Channels & Junk)
 	// =========================================================
 	
-	// 1. Block Newsletters / Channels
-	// اگر آئی ڈی 120 سے شروع ہو رہی ہے یا اس میں newsletter ہے تو فورا واپس جائیں
+	// 1. Block Newsletters / Channels (120... or @newsletter)
 	if strings.HasPrefix(chatID, "120") || strings.Contains(chatID, "@newsletter") {
 		return 
 	}
+	
+	// نوٹ: اسٹیٹس (status@broadcast) کو یہاں سے جانے دے رہے ہیں (return نہیں کیا)
 
 	// =========================================================
 	// 🛠️ 1. LID FIXER (Chat ID)
@@ -571,7 +573,6 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 			chatID = realChat.String()
 		}
 	}
-	// فارمیٹ سیدھا کریں
 	chatID = canonicalChatID(chatID)
 
 	// =========================================================
@@ -579,8 +580,10 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 	// =========================================================
 	realSenderJID := senderJID
 	if isFromMe {
-		if myReal, found := GetJIDFromLID(client.Store.ID.User); found {
-			realSenderJID = myReal
+		if client.Store.ID != nil {
+			if myReal, found := GetJIDFromLID(client.Store.ID.User); found {
+				realSenderJID = myReal
+			}
 		}
 	} else {
 		if userReal, found := GetJIDFromLID(senderJID.String()); found {
@@ -599,10 +602,10 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 
 	timestamp := time.Unix(int64(ts), 0)
 	isGroup := strings.Contains(chatID, "@g.us")
-	isChannel := false // اب یہ ہمیشہ false رہے گا کیونکہ ہم نے اوپر ہی روک دیا ہے
+	isChannel := false 
 
-	// Name Check
-	if contact, err := client.Store.Contacts.GetContact(realSenderJID); err == nil && contact.Found {
+	// ✅ FIX: Context Added to GetContact
+	if contact, err := client.Store.Contacts.GetContact(context.Background(), realSenderJID); err == nil && contact.Found {
 		senderName = contact.FullName
 		if senderName == "" { senderName = contact.PushName }
 	}
@@ -613,7 +616,7 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 	// =========================================================
 	// 🛠️ 4. CONTENT PROCESSING
 	// =========================================================
-
+	
 	var contextInfo *waProto.ContextInfo
 	if msg.ExtendedTextMessage != nil {
 		contextInfo = msg.ExtendedTextMessage.ContextInfo
@@ -649,7 +652,6 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 		}
 	}
 
-	// Message ID
 	messageID := ""
 	if contextInfo != nil && contextInfo.StanzaID != nil {
 		messageID = *contextInfo.StanzaID
@@ -658,7 +660,6 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 		messageID = fmt.Sprintf("%s_%d", strings.Split(chatID, "@")[0], time.Now().UnixNano())
 	}
 
-	// Media Handling
 	if txt := getText(msg); txt != "" {
 		msgType = "text"
 		content = txt
@@ -743,6 +744,7 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 		// ignore
 	}
 }
+
 
 
 // helper: save media in separate collection

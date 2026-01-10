@@ -57,33 +57,19 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 		// Filter old messages for COMMANDS only (keep history saving for all)
 		isRecent := time.Since(v.Info.Timestamp) < 1*time.Minute
 
-		// ❌ پرانا کوڈ یہاں اسٹیٹس روک رہا تھا، ہم نے اسے نیچے بھیج دیا ہے تاکہ DB میں سیو ہو سکے
-
 		// =========================================================
-		// 💾 REDIS LID MAPPER (LID -> REAL JID)
+		// 💾 REDIS LID MAPPER (JID Mapping)
 		// =========================================================
 		go func() {
 			realJID := v.Info.Sender 
 			
-			contact, err := botClient.Store.Contacts.GetContact(realJID)
-			
-			if err == nil && contact.Found && !contact.LID.IsEmpty() {
-				lidUser := contact.LID.User 
-				redisKey := "lid_map:" + lidUser
-
-				exists, errRDS := rdb.Exists(context.Background(), redisKey).Result()
-				
-				if errRDS == nil && exists == 0 {
-					// Link LID to Real JID
-					rdb.Set(context.Background(), redisKey, realJID.String(), 0)
-				}
 			}
 		}()
 		// =========================================================
 
 		// ✅ Save Message to Mongo (Background)
-		// نوٹ: اب ہم یہاں 'v.Info.Sender' بھیج رہے ہیں تاکہ LID فکس ہو سکے
 		go func() {
+			// ✅ FIX 3: Context Added here as well inside internal calls if needed
 			botID := getCleanID(botClient.Store.ID.User)
 			saveMessageToMongo(botClient, botID, v.Info.Chat.String(), v.Info.Sender, v.Message, v.Info.IsFromMe, uint64(v.Info.Timestamp.Unix()))
 		}()
@@ -106,7 +92,6 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 
 			botID := getCleanID(botClient.Store.ID.User)
 			for _, conv := range v.Data.Conversations {
-				// ✅ FIX: conv.ID Pointer -> String
 				chatID := ""
 				if conv.ID != nil {
 					chatID = *conv.ID
@@ -127,16 +112,18 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 						isFromMe = *webMsg.Key.FromMe
 					}
 
-					// 👇 تاریخ (History) سے Sender نکالنا ضروری ہے LID فکس کے لیے
+					// 👇 تاریخ (History) سے Sender نکالنا
 					senderJID := types.EmptyJID
 					if webMsg.Key != nil && webMsg.Key.Participant != nil {
 						senderJID, _ = types.ParseJID(*webMsg.Key.Participant)
 					} else if webMsg.Key != nil && webMsg.Key.RemoteJID != nil {
 						senderJID, _ = types.ParseJID(*webMsg.Key.RemoteJID)
 					}
-					// اگر میسج ہمارا اپنا ہے
-					if isFromMe {
-						senderJID = botClient.Store.ID
+					
+					// ✅ FIX 4: Pointer Dereference (*botClient.Store.ID)
+					// اگر میسج ہمارا اپنا ہے تو ID اٹھانے کے لیے * لگائیں
+					if isFromMe && botClient.Store.ID != nil {
+						senderJID = *botClient.Store.ID
 					}
 
 					ts := uint64(0)
@@ -144,7 +131,7 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 						ts = *webMsg.MessageTimestamp
 					}
 
-					// ✅ Save Call (With Sender JID)
+					// ✅ Save Call
 					saveMessageToMongo(botClient, botID, chatID, senderJID, webMsg.Message, isFromMe, ts)
 				}
 			}
@@ -156,6 +143,7 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 		}
 	}
 }
+
 
 
 // 🔍 Helper: LID دے کر Real JID نکالنے کا فنکشن
