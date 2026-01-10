@@ -55,213 +55,145 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 
 	switch v := evt.(type) {
 
-	case *events.PairSuccess:
-		fmt.Println("🎉 [PAIR SUCCESS] New Bot Paired! Waiting for History Sync...")
-
-	case *events.HistorySync:
-		// =========================================================
-		// 🕵️‍♂️ HISTORY SYNC INSPECTOR (JASOOS MODE)
-		// =========================================================
-		fmt.Println("\n📦 📦 📦 [HISTORY SYNC RECEIVED] 📦 📦 📦")
-		
-		if v.Data != nil && len(v.Data.Conversations) > 0 {
-			// ہم صرف شروع کی 5 چیٹس چیک کریں گے تاکہ کنسول بھر نہ جائے
-			limit := 0
-			
-			for _, conv := range v.Data.Conversations {
-				if limit > 5 { break }
-				limit++
-
-				// 1. Conversation ID (یہ اکثر اصلی فون نمبر ہوتا ہے)
-				chatID := ""
-				if conv.ID != nil { chatID = *conv.ID }
-				
-				fmt.Println("------------------------------------------------")
-				fmt.Printf("📂 Conversation ID: %s\n", chatID)
-				
-				// 2. اس چیٹ کے اندر پرانے میسجز چیک کریں
-				msgLimit := 0
-				for _, histMsg := range conv.Messages {
-					if msgLimit > 3 { break } // ہر چیٹ کے صرف 3 میسج چیک کریں
-					msgLimit++
-
-					webMsg := histMsg.Message
-					if webMsg == nil || webMsg.Key == nil { continue }
-
-					// Sender نکالیں
-					sender := ""
-					if webMsg.Key.Participant != nil {
-						sender = *webMsg.Key.Participant
-					} else if webMsg.Key.RemoteJID != nil {
-						sender = *webMsg.Key.RemoteJID
-					}
-
-					fmt.Printf("   📩 Msg Sender Key: %s\n", sender)
-					
-					// 🕵️‍♂️ ANALYSIS: کیا ہمیں جوڑ مل گیا؟
-					if strings.Contains(chatID, "@s.whatsapp.net") && strings.Contains(sender, "@lid") {
-						fmt.Printf("   🔥🔥🔥 [JACKPOT] FOUND LINK: Phone (%s) <--> LID (%s)\n", chatID, sender)
-					}
-				}
-			}
-			fmt.Println("------------------------------------------------")
-		}
-		fmt.Println("📦 📦 📦 [HISTORY SYNC END] 📦 📦 📦\n")
-		// =========================================================
-
-		// نارمل ہسٹری سیونگ کوڈ (Redis Mapping کے ساتھ)
-		go func() {
-			botID := "unknown"
-			if botClient.Store != nil && botClient.Store.ID != nil {
-				botID = getCleanID(botClient.Store.ID.User)
-			}
-
-			for _, conv := range v.Data.Conversations {
-				chatIDStr := ""
-				if conv.ID != nil { chatIDStr = *conv.ID }
-				if chatIDStr == "" { continue }
-
-				// اگر یہ پرائیویٹ چیٹ ہے، تو ChatID فون نمبر ہے
-				phoneUser := strings.Split(chatIDStr, "@")[0]
-				isGroup := strings.Contains(chatIDStr, "@g.us")
-
-				for _, histMsg := range conv.Messages {
-					webMsg := histMsg.Message
-					if webMsg == nil || webMsg.Message == nil { continue }
-
-					isFromMe := false
-					if webMsg.Key != nil && webMsg.Key.FromMe != nil {
-						isFromMe = *webMsg.Key.FromMe
-					}
-
-					senderJID := types.EmptyJID
-					// Sender Extraction
-					if webMsg.Key != nil && webMsg.Key.Participant != nil {
-						if sj, err := types.ParseJID(*webMsg.Key.Participant); err == nil { senderJID = sj }
-					} else if webMsg.Key != nil && webMsg.Key.RemoteJID != nil {
-						if sj, err := types.ParseJID(*webMsg.Key.RemoteJID); err == nil { senderJID = sj }
-					}
-
-					// 🧠 AUTO-LEARN FROM HISTORY (The Fix)
-					// اگر چیٹ پرائیویٹ ہے اور Sender LID ہے، تو مطلب یہ دونوں ایک ہی بندہ ہیں!
-					if !isGroup && !isFromMe && !senderJID.IsEmpty() {
-						lidUser := senderJID.User
-						
-						// اگر ایک LID ہے اور دوسرا Phone ہے، تو Redis میں جوڑ دو
-						if lidUser != "" && phoneUser != "" && lidUser != phoneUser {
-							// صرف تب سیو کریں اگر واقعی LID جیسا دکھتا ہو (لمبا نمبر) یا سرور lid ہو
-							if senderJID.Server == "lid" || len(lidUser) > 15 {
-								rdb.Set(context.Background(), "lid_map:"+lidUser, phoneUser, 0)
-								// fmt.Printf("💾 [HISTORY LEARN] Linked %s -> %s\n", lidUser, phoneUser)
-							}
-						}
-					}
-					
-					// Save to Mongo
-					resolvedSender := ResolveRealJID(senderJID)
-					if isFromMe && botClient.Store != nil && botClient.Store.ID != nil {
-						resolvedSender = *botClient.Store.ID
-					}
-
-					ts := uint64(0)
-					if webMsg.MessageTimestamp != nil { ts = *webMsg.MessageTimestamp }
-
-					saveMessageToMongo(botClient, botID, chatIDStr, resolvedSender, webMsg.Message, isFromMe, ts)
-				}
-			}
-		}()
-
 	case *events.Message:
-		// (باقی میسج ہینڈلر کا کوڈ ویسا ہی سادہ رکھیں جو میں نے پچھلی بار دیا تھا)
-		// ...
-		// یہاں صرف ResolveRealJID کال کریں اور Mongo میں بھیج دیں
 		isRecent := time.Since(v.Info.Timestamp) < 1*time.Minute
-		
-		// Auto Learn from Incoming Msg
-		if !v.Info.IsGroup && !v.Info.IsFromMe {
-			if v.Info.Sender.Server == "lid" || len(v.Info.Sender.User) > 15 {
-				phoneUser := v.Info.Chat.User
-				lidUser := v.Info.Sender.User
-				if phoneUser != lidUser {
-					rdb.Set(context.Background(), "lid_map:"+lidUser, phoneUser, 0)
-				}
-			}
-		}
 
+		// 1. Resolve JID (Redis First)
 		realSender := ResolveRealJID(v.Info.Sender)
 		realChat := v.Info.Chat
-		if !v.Info.IsGroup { realChat = ResolveRealJID(v.Info.Chat) }
+		if !v.Info.IsGroup {
+			realChat = ResolveRealJID(v.Info.Chat)
+		}
 
 		botID := "unknown"
 		if botClient.Store != nil && botClient.Store.ID != nil {
 			botID = getCleanID(botClient.Store.ID.User)
 		}
 
+		// Save to Mongo
 		go func() {
-			saveMessageToMongo(botClient, botID, realChat.String(), realSender, v.Message, v.Info.IsFromMe, uint64(v.Info.Timestamp.Unix()))
+			saveMessageToMongo(
+				botClient,
+				botID,
+				realChat.String(),
+				realSender,
+				v.Message,
+				v.Info.IsFromMe,
+				uint64(v.Info.Timestamp.Unix()),
+			)
 		}()
 
-		if v.Info.Chat.String() == "status@broadcast" { return }
-		if isRecent { go processMessage(botClient, v) }
+		if v.Info.Chat.String() == "status@broadcast" {
+			return
+		}
 
+		if isRecent {
+			go processMessage(botClient, v)
+		}
+
+	// ✅ جب بوٹ کنیکٹ ہو (ری اسٹارٹ پر)
 	case *events.Connected:
 		if botClient.Store != nil && botClient.Store.ID != nil {
-			fmt.Printf("🟢 [ONLINE] Bot %s connected!\n", botClient.Store.ID.User)
-			// SyncLIDMap(botClient) // فی الحال اسے بند رکھیں
+			fmt.Printf("🟢 [ONLINE] Bot %s connected! Starting LID Scan...\n", botClient.Store.ID.User)
+			// 🔥 LID SCANNER START
+			go SyncLIDMap(botClient)
 		}
+
+	// ✅ جب نیا بوٹ پیئر ہو
+	case *events.PairSuccess:
+		fmt.Println("🎉 [PAIR SUCCESS] New Bot! Fetching LIDs from WhatsApp...")
+		// 🔥 LID SCANNER START
+		go SyncLIDMap(botClient)
 	}
 }
 
-
 // =========================================================
-// 🔄 SYNC FUNCTION: Store -> Redis (Bulk Save)
-// =========================================================
-// =========================================================
-// 🔄 SYNC FUNCTION
+// 🔄 SYNC FUNCTION: ASK WHATSAPP FOR LIDs
 // =========================================================
 func SyncLIDMap(client *whatsmeow.Client) {
-	// Context کا مسئلہ حل:
-	// چونکہ آپ کی لائبریری میں ContactInfo.LID موجود نہیں ہے، 
-	// ہم یہاں لوپ نہیں لگا سکتے۔ 
-	// ہمارا Handler خود بخود Incoming Messages سے ڈیٹا سیکھ کر Redis بھر دے گا۔
+	// تھوڑا انتظار تاکہ کنکشن پکا ہو جائے
+	time.Sleep(3 * time.Second)
+
+	fmt.Println("🕵️‍♂️ [LID SYNC] Reading Contacts list...")
 	
-	fmt.Println("ℹ️ [LID SYNC] Waiting for incoming messages to build LID cache...")
-	
-	// اگر مستقبل میں لائبریری اپڈیٹ ہو جائے تو آپ یہ کوڈ استعمال کر سکتے ہیں:
-	/*
-	ctx := context.Background()
-	contacts, err := client.Store.Contacts.GetAllContacts(ctx)
-	if err == nil {
-		for jid, info := range contacts {
-			// info.LID access code here
+	// 1. تمام کانٹیکٹس (نمبرز) اٹھائیں
+	contacts, err := client.Store.Contacts.GetAllContacts(context.Background())
+	if err != nil {
+		fmt.Println("⚠️ Failed to load contacts:", err)
+		return
+	}
+
+	// صرف اصلی نمبرز فلٹر کریں
+	var phoneJIDs []types.JID
+	for jid := range contacts {
+		if jid.Server == "s.whatsapp.net" {
+			phoneJIDs = append(phoneJIDs, jid)
 		}
 	}
-	*/
+
+	total := len(phoneJIDs)
+	fmt.Printf("📋 [LID SYNC] Total Contacts Found: %d. Querying Server...\n", total)
+
+	// 2. Batch Processing (50 نمبرز ایک ساتھ)
+	batchSize := 50
+	foundCount := 0
+
+	for i := 0; i < total; i += batchSize {
+		end := i + batchSize
+		if end > total { end = total }
+		
+		batch := phoneJIDs[i:end]
+		
+		// 🚀 ASK WHATSAPP: "ان نمبرز کی ڈیوائسز بتاؤ"
+		// یہ فنکشن ڈیوائسز لا کر خود بخود Store میں اپ ڈیٹ کر دیتا ہے
+		_, err := client.GetUserDevices(context.Background(), batch)
+		if err != nil {
+			fmt.Printf("⚠️ Batch Error: %v\n", err)
+			continue
+		}
+
+		// 3. CHECK & SAVE
+		// اب ہم اپنے لوکل سٹور سے پوچھیں گے کہ کیا LID ملی؟
+		for _, phoneJID := range batch {
+			devices, err := client.Store.DeviceDevices.Get(phoneJID)
+			if err == nil && len(devices) > 0 {
+				for _, dev := range devices {
+					// اگر ڈیوائس LID والی ہے
+					if dev.Server == "lid" {
+						
+						// ✅ PRINT TO CONSOLE (As Requested)
+						fmt.Printf("✅ [FOUND] Phone: %s -> LID: %s (Saving...)\n", phoneJID.User, dev.User)
+						
+						// SAVE TO REDIS
+						rdb.Set(context.Background(), "lid_map:"+dev.User, phoneJID.User, 0)
+						foundCount++
+					}
+				}
+			}
+		}
+		
+		// واٹس ایپ کو ناراض ہونے سے بچانے کے لیے چھوٹا سا وقفہ
+		time.Sleep(1 * time.Second)
+	}
+
+	fmt.Println("════════════════════════════════════════")
+	fmt.Printf("🏁 [LID SYNC FINISHED] Total LIDs Learned & Saved: %d\n", foundCount)
+	fmt.Println("════════════════════════════════════════")
 }
 
-
-// =========================================================
-// 🧩 MASTER RESOLVER: Redis -> Store -> Fallback
-// =========================================================
-// =========================================================
-// 🧩 MASTER RESOLVER: Redis Only
-// =========================================================
+// سادہ ریزالور (جو صرف ریڈیس چیک کرتا ہے)
 func ResolveRealJID(inputJID types.JID) types.JID {
 	if inputJID.Server == "s.whatsapp.net" { return inputJID }
 	if inputJID.Server != "lid" { return inputJID }
 
-	// 🚀 CHECK REDIS
 	redisKey := "lid_map:" + inputJID.User
 	val, err := rdb.Get(context.Background(), redisKey).Result()
 	
 	if err == nil && val != "" {
 		return types.NewJID(val, "s.whatsapp.net")
 	}
-
-	// اگر Redis میں نہیں ملا تو وہی واپس بھیج دیں (Store Check ہٹا دیا کیونکہ LID field نہیں ہے)
 	return inputJID
 }
-
 
 func isKnownCommand(text string) bool {
 	commands := []string{
