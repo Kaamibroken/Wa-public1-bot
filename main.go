@@ -538,6 +538,7 @@ type MediaItem struct {
 	CreatedAt  time.Time `bson:"created_at" json:"created_at"`
 }
 // 🔥 HELPER: Save Message to Mongo (Fixed Context)
+// Save Message to Mongo (optimized: text in messages, media in mediaCollection)
 func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waProto.Message, isFromMe bool, ts uint64) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -549,14 +550,20 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waP
 		return
 	}
 
+	// ✅ canonical to stop LID split chats
+	chatID = canonicalChatID(chatID)
+
+	var msgType, content, senderName string
+	var quotedMsg, quotedSender string
+	var isSticker bool
+
 	timestamp := time.Unix(int64(ts), 0)
 	isGroup := strings.Contains(chatID, "@g.us")
 	isChannel := strings.Contains(chatID, "@newsletter")
 
 	jid, _ := types.ParseJID(chatID)
 
-	// -------- Sender Name Lookup --------
-	senderName := ""
+	// name lookup
 	if isGroup {
 		if info, err := client.GetGroupInfo(context.Background(), jid); err == nil {
 			senderName = info.Name
@@ -574,8 +581,7 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waP
 		senderName = strings.Split(chatID, "@")[0]
 	}
 
-	// -------- Reply Info --------
-	var quotedMsg, quotedSender string
+	// replies
 	var contextInfo *waProto.ContextInfo
 	if msg.ExtendedTextMessage != nil {
 		contextInfo = msg.ExtendedTextMessage.ContextInfo
@@ -598,56 +604,108 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waP
 
 	if contextInfo != nil && contextInfo.QuotedMessage != nil {
 		if contextInfo.Participant != nil {
-			quotedSender = *contextInfo.Participant
+			quotedSender = canonicalChatID(*contextInfo.Participant)
+		} else if contextInfo.RemoteJID != nil {
+			quotedSender = canonicalChatID(*contextInfo.RemoteJID)
 		}
 		if contextInfo.QuotedMessage.Conversation != nil {
 			quotedMsg = *contextInfo.QuotedMessage.Conversation
 		} else if contextInfo.QuotedMessage.ExtendedTextMessage != nil && contextInfo.QuotedMessage.ExtendedTextMessage.Text != nil {
 			quotedMsg = *contextInfo.QuotedMessage.ExtendedTextMessage.Text
 		} else {
-			quotedMsg = "Replying..."
+			quotedMsg = "Replying…"
 		}
 	}
 
-	// -------- Determine message_id (very important) --------
-	// You must pass the same message_id that frontend will use.
-	// If you already have a message ID from event, use it.
-	// If not, use a fallback unique ID (timestamp+rand). (Better: use event's ID)
+	// message id
 	messageID := ""
-	// NOTE: You likely have it in your event handler; pass it in if possible.
-	// As fallback:
-	messageID = fmt.Sprintf("%d-%d", timestamp.Unix(), time.Now().UnixNano())
+	if contextInfo != nil && contextInfo.StanzaID != nil {
+		messageID = *contextInfo.StanzaID
+	}
+	// if no stanza id in context, generate stable-ish id
+	if messageID == "" {
+		messageID = fmt.Sprintf("%s_%d", strings.Split(chatID, "@")[0], time.Now().UnixNano())
+	}
 
-	// -------- Content logic (messages + media split) --------
-	msgType := ""
-	content := ""
-	isSticker := false
-
-	// Text
+	// default: text
 	if txt := getText(msg); txt != "" {
 		msgType = "text"
 		content = txt
 	} else if msg.ImageMessage != nil {
 		msgType = "image"
 		content = "MEDIA_WAITING"
-		saveMediaForMessage(client, botID, messageID, "image", msg.ImageMessage)
+		go saveMediaDoc(botID, chatID, messageID, "image", "image/jpeg", func() (string, error) {
+			data, err := client.Download(context.Background(), msg.ImageMessage)
+			if err != nil {
+				return "", err
+			}
+			encoded := base64.StdEncoding.EncodeToString(data)
+			return "data:image/jpeg;base64," + encoded, nil
+		})
 	} else if msg.StickerMessage != nil {
 		msgType = "image"
 		isSticker = true
 		content = "MEDIA_WAITING"
-		saveMediaForMessage(client, botID, messageID, "sticker", msg.StickerMessage)
+		go saveMediaDoc(botID, chatID, messageID, "image", "image/webp", func() (string, error) {
+			data, err := client.Download(context.Background(), msg.StickerMessage)
+			if err != nil {
+				return "", err
+			}
+			encoded := base64.StdEncoding.EncodeToString(data)
+			return "data:image/webp;base64," + encoded, nil
+		})
 	} else if msg.VideoMessage != nil {
 		msgType = "video"
 		content = "MEDIA_WAITING"
-		saveMediaForMessage(client, botID, messageID, "video", msg.VideoMessage)
+		go saveMediaDoc(botID, chatID, messageID, "video", "video/mp4", func() (string, error) {
+			data, err := client.Download(context.Background(), msg.VideoMessage)
+			if err != nil {
+				return "", err
+			}
+			// keep your catbox uploader
+			url, err := UploadToCatbox(data, "video.mp4")
+			if err != nil {
+				return "", err
+			}
+			return url, nil
+		})
 	} else if msg.AudioMessage != nil {
 		msgType = "audio"
 		content = "MEDIA_WAITING"
-		saveMediaForMessage(client, botID, messageID, "audio", msg.AudioMessage)
+		go saveMediaDoc(botID, chatID, messageID, "audio", "audio/ogg", func() (string, error) {
+			data, err := client.Download(context.Background(), msg.AudioMessage)
+			if err != nil {
+				return "", err
+			}
+			// prefer base64 for smaller files
+			if len(data) <= 10*1024*1024 {
+				encoded := base64.StdEncoding.EncodeToString(data)
+				return "data:audio/ogg;base64," + encoded, nil
+			}
+			url, err := UploadToCatbox(data, "audio.ogg")
+			if err != nil {
+				return "", err
+			}
+			return url, nil
+		})
 	} else if msg.DocumentMessage != nil {
 		msgType = "file"
 		content = "MEDIA_WAITING"
-		saveMediaForMessage(client, botID, messageID, "file", msg.DocumentMessage)
+		go saveMediaDoc(botID, chatID, messageID, "file", "application/octet-stream", func() (string, error) {
+			data, err := client.Download(context.Background(), msg.DocumentMessage)
+			if err != nil {
+				return "", err
+			}
+			fname := msg.DocumentMessage.GetFileName()
+			if fname == "" {
+				fname = "file.bin"
+			}
+			url, err := UploadToCatbox(data, fname)
+			if err != nil {
+				return "", err
+			}
+			return url, nil
+		})
 	} else {
 		return
 	}
@@ -658,10 +716,10 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waP
 		Sender:       chatID,
 		SenderName:   senderName,
 		MessageID:    messageID,
-		Timestamp:    timestamp,
 		Type:         msgType,
-		Content:      content, // text or MEDIA_WAITING
+		Content:      content,
 		IsFromMe:     isFromMe,
+		Timestamp:    timestamp,
 		IsGroup:      isGroup,
 		IsChannel:    isChannel,
 		IsSticker:    isSticker,
@@ -669,22 +727,40 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waP
 		QuotedSender: quotedSender,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	_, err := chatHistoryCollection.InsertOne(context.Background(), doc)
+	if err != nil {
+		// ignore duplicates
+		// fmt.Printf("❌ Mongo Save Error: %v\n", err)
+	}
+}
+
+// helper: save media in separate collection
+func saveMediaDoc(botID, chatID, messageID, typ, mime string, loader func() (string, error)) {
+	if mediaCollection == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	_, err := chatHistoryCollection.InsertOne(ctx, doc)
-	if err != nil {
-		fmt.Printf("❌ Mongo Save Error: %v\n", err)
+	content, err := loader()
+	if err != nil || content == "" {
 		return
 	}
 
-	// 🔥 realtime update to UI (if you want)
-	broadcastWS(map[string]any{
-		"type":    "new_message",
-		"bot_id":  botID,
-		"chat_id": chatID,
-		"msg":     doc,
-	})
+	_, _ = mediaCollection.UpdateOne(
+		ctx,
+		bson.M{"message_id": messageID},
+		bson.M{"$set": bson.M{
+			"bot_id":      botID,
+			"chat_id":     chatID,
+			"message_id":  messageID,
+			"type":        typ,
+			"mime":        mime,
+			"content":     content,
+			"created_at":  time.Now(),
+		}},
+		options.Update().SetUpsert(true),
+	)
 }
 
 // ⚡ SetGlobalClient
@@ -1424,36 +1500,60 @@ type MediaDoc struct {
 }
 
 func handleGetMedia(w http.ResponseWriter, r *http.Request) {
-	if mediaCollection == nil {
-		http.Error(w, "MongoDB media collection not connected", 500)
+	if mongoClient == nil {
+		http.Error(w, "MongoDB not connected", 500)
 		return
 	}
 
-	botID := r.URL.Query().Get("bot_id")
 	msgID := r.URL.Query().Get("msg_id")
-	if botID == "" || msgID == "" {
-		http.Error(w, "bot_id and msg_id required", 400)
+	if msgID == "" {
+		http.Error(w, "Message ID required", 400)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	var media MediaDoc
-	err := mediaCollection.FindOne(ctx, bson.M{"bot_id": botID, "message_id": msgID}).Decode(&media)
-	if err != nil {
-		http.Error(w, "Media not found", 404)
-		return
+	type MediaDoc struct {
+		MessageID string    `bson:"message_id"`
+		Type      string    `bson:"type"`
+		Content   string    `bson:"content"`
+		Mime      string    `bson:"mime"`
+		CreatedAt time.Time `bson:"created_at"`
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":  "ok",
-		"type":    media.Type,
-		"mime":    media.Mime,
-		"content": media.Content,
-		"size":    media.Size,
-	})
+	// ✅ 1) Try media collection first
+	if mediaCollection != nil {
+		var md MediaDoc
+		err := mediaCollection.FindOne(ctx, bson.M{"message_id": msgID}).Decode(&md)
+		if err == nil && md.Content != "" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"status":  "ok",
+				"content": md.Content,
+				"type":    md.Type,
+				"mime":    md.Mime,
+			})
+			return
+		}
+	}
+
+	// ✅ 2) Fallback to messages collection (backward compatibility)
+	if chatHistoryCollection != nil {
+		var msg ChatMessage
+		err := chatHistoryCollection.FindOne(ctx, bson.M{"message_id": msgID}).Decode(&msg)
+		if err == nil && msg.Content != "" && msg.Content != "MEDIA_WAITING" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"status":  "ok",
+				"content": msg.Content,
+				"type":    msg.Type,
+			})
+			return
+		}
+	}
+
+	http.Error(w, "Media not found", 404)
 }
 
 func handleGetAvatar(w http.ResponseWriter, r *http.Request) {
@@ -1483,4 +1583,50 @@ func handleGetAvatar(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"url": pic.URL})
+}
+
+func canonicalChatID(chatID string) string {
+	// Goal:
+	// - remove device part "12345:67@s.whatsapp.net" -> "12345@s.whatsapp.net"
+	// - if lid server: "12345:67@lid" -> "12345@s.whatsapp.net"
+	// - keep groups/newsletter as-is
+
+	if chatID == "" {
+		return ""
+	}
+
+	// groups + newsletter keep
+	if strings.Contains(chatID, "@g.us") || strings.Contains(chatID, "@newsletter") {
+		// also strip ":device" in group just in case
+		parts := strings.Split(chatID, "@")
+		left := parts[0]
+		if strings.Contains(left, ":") {
+			left = strings.Split(left, ":")[0]
+		}
+		return left + "@" + parts[1]
+	}
+
+	// user jid
+	parts := strings.Split(chatID, "@")
+	left := parts[0]
+	server := ""
+	if len(parts) > 1 {
+		server = parts[1]
+	}
+
+	// strip device
+	if strings.Contains(left, ":") {
+		left = strings.Split(left, ":")[0]
+	}
+
+	// if lid -> force s.whatsapp.net
+	if server == "lid" || strings.Contains(chatID, "@lid") {
+		return left + "@s.whatsapp.net"
+	}
+
+	// normal user
+	if server == "" {
+		return left + "@s.whatsapp.net"
+	}
+	return left + "@" + server
 }
