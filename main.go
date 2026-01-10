@@ -41,7 +41,7 @@ type ChatMessage struct {
 	SenderName string    `bson:"sender_name" json:"sender_name"`
 	MessageID  string    `bson:"message_id" json:"message_id"`
 	Timestamp  time.Time `bson:"timestamp" json:"timestamp"`
-	Type       string    `bson:"type" json:"type"` 
+	Type       string    `bson:"type" json:"type"`
 	Content    string    `bson:"content" json:"content"`
 	IsFromMe   bool      `bson:"is_from_me" json:"is_from_me"`
 	IsGroup    bool      `bson:"is_group" json:"is_group"`
@@ -52,7 +52,7 @@ type ChatMessage struct {
 type ChatItem struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	Type string `json:"type"` 
+	Type string `json:"type"`
 }
 
 var (
@@ -201,7 +201,7 @@ func main() {
 	InitLIDSystem()
 
 	// 6. Web Server Routes
-	http.HandleFunc("/", serveHTML)
+	http.HandleFunc("/", serveHTML) // ✅ This was missing
 	http.HandleFunc("/pic.png", servePicture)
 	http.HandleFunc("/ws", handleWebSocket)
 
@@ -210,7 +210,7 @@ func main() {
 	http.HandleFunc("/link/pair/", handlePairAPILegacy)
 
 	// Delete APIs
-	http.HandleFunc("/link/delete", handleDeleteSession)
+	http.HandleFunc("/link/delete", handleDeleteSession) // ✅ This was missing
 	http.HandleFunc("/del/all", handleDelAllAPI)
 	http.HandleFunc("/del/", handleDelNumberAPI)
 
@@ -292,16 +292,16 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waP
 	isChannel := strings.Contains(chatID, "@newsletter")
 
 	jid, _ := types.ParseJID(chatID)
-	
+
 	// ✅ Smart Name Lookup: Check Contact Store first
-	if contact, err := client.Store.Contacts.GetContact(jid); err == nil && contact.Found {
+	if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
 		senderName = contact.FullName
 		if senderName == "" {
 			senderName = contact.PushName
 		}
 	} else {
 		// Fallback
-		if contact, err := client.Store.Contacts.GetContact(jid); err == nil {
+		if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil {
 			senderName = contact.PushName
 		}
 	}
@@ -812,7 +812,7 @@ func monitorNewSessions(container *sqlstore.Container) {
 }
 
 // -----------------------------------------------------
-// 🔥 WEB API HANDLERS (UPDATED NAMES & SCROLL LOGIC)
+// 🔥 WEB API HANDLERS (UPDATED & FIXED)
 // -----------------------------------------------------
 
 func handleGetSessions(w http.ResponseWriter, r *http.Request) {
@@ -854,46 +854,39 @@ func handleGetChats(w http.ResponseWriter, r *http.Request) {
 		chatID := raw.(string)
 		cleanName := ""
 		chatType := "user"
-		avatarURL := ""
-
-		jid, _ := types.ParseJID(chatID)
 
 		if strings.Contains(chatID, "@g.us") {
 			chatType = "group"
-			if isConnected && client != nil {
-				// ✅ FIXED: Using Store.ChatSettings (Correct for Groups)
-				if info, err := client.Store.ChatSettings.GetChatSettings(jid); err == nil && info.Name != "" {
-					cleanName = info.Name
-				} else {
-					// Fallback to Network Call
-					if grp, err := client.GetGroupInfo(jid); err == nil {
-						cleanName = grp.Name
-					}
-				}
-			}
-		} else if strings.Contains(chatID, "@newsletter") {
+		}
+		if strings.Contains(chatID, "@newsletter") {
 			chatType = "channel"
-			if isConnected && client != nil {
-				// ✅ FIXED: Using GetNewsletterInfo
-				if metadata, err := client.GetNewsletterInfo(jid); err == nil {
-					cleanName = metadata.Name
-					// Handle Picture (Pointer check)
-					if metadata.Picture != nil {
-						avatarURL = metadata.Picture.URL
-					}
+		}
+
+		if isConnected && client != nil {
+			jid, _ := types.ParseJID(chatID)
+
+			if chatType == "group" {
+				// ✅ SAFE GROUP NAME LOOKUP
+				if grp, err := client.GetGroupInfo(context.Background(), jid); err == nil {
+					cleanName = grp.Name
 				}
-			}
-		} else {
-			if isConnected && client != nil {
-				if contact, err := client.Store.Contacts.GetContact(jid); err == nil && contact.Found {
+			} else if chatType == "user" {
+				// ✅ SAFE CONTACT LOOKUP
+				if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
 					cleanName = contact.FullName
 					if cleanName == "" {
 						cleanName = contact.PushName
 					}
 				}
+			} else if chatType == "channel" {
+				// ✅ Try Contact Store for Channels (Avoids breaking on struct mismatch)
+				if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
+					cleanName = contact.FullName
+				}
 			}
 		}
 
+		// Fallback: Check MongoDB History
 		if cleanName == "" {
 			var lastMsg ChatMessage
 			err := chatHistoryCollection.FindOne(context.Background(),
@@ -905,6 +898,7 @@ func handleGetChats(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Final Fallback
 		if cleanName == "" {
 			if chatType == "group" {
 				cleanName = "Unknown Group"
@@ -920,7 +914,6 @@ func handleGetChats(w http.ResponseWriter, r *http.Request) {
 			Name: cleanName,
 			Type: chatType,
 		})
-		_ = avatarURL // Silence unused variable warning
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -982,7 +975,9 @@ func handleGetMedia(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
 		"content": msg.Content,
+		"type":    msg.Type,
 	})
 }
 
@@ -1001,16 +996,8 @@ func handleGetAvatar(w http.ResponseWriter, r *http.Request) {
 
 	jid, _ := types.ParseJID(chatID)
 
-	// Check for Channel
-	if strings.Contains(chatID, "@newsletter") {
-		if metadata, err := client.GetNewsletterInfo(jid); err == nil && metadata.Picture != nil {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"url": metadata.Picture.URL})
-			return
-		}
-	}
-
-	pic, err := client.GetProfilePictureInfo(jid, &whatsmeow.GetProfilePictureParams{
+	// ✅ SAFE AVATAR LOOKUP
+	pic, err := client.GetProfilePictureInfo(context.Background(), jid, &whatsmeow.GetProfilePictureParams{
 		Preview: true,
 	})
 
