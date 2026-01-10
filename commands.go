@@ -63,6 +63,7 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 		go func() {
 			realJID := v.Info.Sender 
 			
+			if err == nil && contact.Found {
 			}
 		}()
 		// =========================================================
