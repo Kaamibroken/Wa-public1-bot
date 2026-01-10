@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"database/sql" 
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,25 +17,23 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"encoding/base64"
-    "go.mau.fi/whatsmeow/types"
+
 	"github.com/gorilla/websocket"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-    "go.mongodb.org/mongo-driver/mongo/options"
-    "go.mongodb.org/mongo-driver/bson"
-    "mime/multipart" // Catbox k liye
-    "bytes"          // Catbox k liye
-    "io"   
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// 📦 STRUCT FOR MESSAGE HISTORY (MISSING THA)
+// 📦 STRUCT FOR MESSAGE HISTORY
 type ChatMessage struct {
 	BotID      string    `bson:"bot_id" json:"bot_id"`
 	ChatID     string    `bson:"chat_id" json:"chat_id"`
@@ -46,52 +48,51 @@ type ChatMessage struct {
 	IsChannel  bool      `bson:"is_channel" json:"is_channel"`
 }
 
-var (
-	client           *whatsmeow.Client
-	container        *sqlstore.Container
-	dbContainer      *sqlstore.Container
-	rdb              *redis.Client
-	ctx              = context.Background()
-	persistentUptime int64
-	groupCache       = make(map[string]*GroupSettings)
-	cacheMutex       sync.RWMutex
-	upgrader         = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-	wsClients       = make(map[*websocket.Conn]bool)
-	botCleanIDCache = make(map[string]string)
-	botPrefixes     = make(map[string]string)
-	prefixMutex     sync.RWMutex
-	clientsMutex    sync.RWMutex
-	activeClients   = make(map[string]*whatsmeow.Client)
-	globalClient    *whatsmeow.Client
-	ytCache         = make(map[string]YTSession)
-	ytDownloadCache = make(map[string]YTState)
-	cachedMenuImage *waProto.ImageMessage
+// 📦 Chat Item Structure
+type ChatItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"` // group, channel, user
+}
 
-	// ✅ MongoDB Globals (UPDATED NAME)
+var (
+	client                *whatsmeow.Client
+	container             *sqlstore.Container
+	dbContainer           *sqlstore.Container
+	rdb                   *redis.Client
+	ctx                   = context.Background()
+	persistentUptime      int64
+	groupCache            = make(map[string]*GroupSettings)
+	cacheMutex            sync.RWMutex
+	upgrader              = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsClients             = make(map[*websocket.Conn]bool)
+	botCleanIDCache       = make(map[string]string)
+	botPrefixes           = make(map[string]string)
+	prefixMutex           sync.RWMutex
+	clientsMutex          sync.RWMutex
+	activeClients         = make(map[string]*whatsmeow.Client)
+	globalClient          *whatsmeow.Client
+	ytCache               = make(map[string]YTSession)
+	ytDownloadCache       = make(map[string]YTState)
+	cachedMenuImage       *waProto.ImageMessage
 	mongoClient           *mongo.Client
 	chatHistoryCollection *mongo.Collection
 )
 
-// ✅ 1. ریڈیس کنکشن
+// ✅ 1. Redis Connection
 func initRedis() {
 	redisURL := os.Getenv("REDIS_URL")
-
 	if redisURL == "" {
 		fmt.Println("⚠️ [REDIS] Warning: REDIS_URL is empty! Defaulting to localhost...")
 		redisURL = "redis://localhost:6379"
 	} else {
 		fmt.Println("📡 [REDIS] Connecting to Redis Cloud...")
 	}
-
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
 		log.Fatalf("❌ Redis URL parsing failed: %v", err)
 	}
-
 	rdb = redis.NewClient(opt)
-
 	_, err = rdb.Ping(ctx).Result()
 	if err != nil {
 		log.Fatalf("❌ Redis connection failed: %v", err)
@@ -99,9 +100,11 @@ func initRedis() {
 	fmt.Println("🚀 [REDIS] Connection Established!")
 }
 
-// ✅ 2. گلوبل سیٹنگز لوڈ کرنا (تاکہ ری اسٹارٹ پر سیٹنگز یاد رہیں)
+// ✅ 2. Load Global Settings
 func loadGlobalSettings() {
-	if rdb == nil { return }
+	if rdb == nil {
+		return
+	}
 	val, err := rdb.Get(ctx, "bot_global_settings").Result()
 	if err == nil {
 		dataMutex.Lock()
@@ -121,12 +124,11 @@ func main() {
 	startPersistentUptimeTracker()
 	SetupFeatures()
 
-	// 🔥🔥🔥 [NEW] MONGODB CONNECTION START 🔥🔥🔥
+	// 🔥 MONGODB CONNECTION
 	mongoURL := os.Getenv("MONGO_URL")
 	if mongoURL != "" {
 		mCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-
 		mClient, err := mongo.Connect(mCtx, options.Client().ApplyURI(mongoURL))
 		if err != nil {
 			fmt.Println("❌ MongoDB Connection Error:", err)
@@ -135,7 +137,6 @@ func main() {
 				fmt.Println("❌ MongoDB Ping Failed:", err)
 			} else {
 				mongoClient = mClient
-				// ✅ FIX: Variable name updated to chatHistoryCollection
 				chatHistoryCollection = mClient.Database("whatsapp_bot").Collection("messages")
 				fmt.Println("🍃 [MONGODB] Connected for Chat History!")
 			}
@@ -143,7 +144,6 @@ func main() {
 	} else {
 		fmt.Println("⚠️ MONGO_URL not found! Chat history will not be saved.")
 	}
-	// 🔥🔥🔥 [NEW] MONGODB CONNECTION END 🔥🔥🔥
 
 	// 2. Postgres Connection
 	dbURL := os.Getenv("DATABASE_URL")
@@ -191,14 +191,13 @@ func main() {
 	http.HandleFunc("/del/all", handleDelAllAPI)
 	http.HandleFunc("/del/", handleDelNumberAPI)
 
-	// 🔥 WEB VIEW & CHAT HISTORY APIS 🔥
-// 🔥 WEB VIEW APIS
-    http.HandleFunc("/lists", serveListsHTML)
-    http.HandleFunc("/api/sessions", handleGetSessions)
-    http.HandleFunc("/api/chats", handleGetChats)       // 👈 This will be updated
-    http.HandleFunc("/api/messages", handleGetMessages)
-    http.HandleFunc("/api/media", handleGetMedia)
-    http.HandleFunc("/api/avatar", handleGetAvatar)     // ✅ NEW: Profile Pic API
+	// 🔥 WEB VIEW APIS
+	http.HandleFunc("/lists", serveListsHTML)
+	http.HandleFunc("/api/sessions", handleGetSessions)
+	http.HandleFunc("/api/chats", handleGetChats)
+	http.HandleFunc("/api/messages", handleGetMessages)
+	http.HandleFunc("/api/media", handleGetMedia)
+	http.HandleFunc("/api/avatar", handleGetAvatar)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -235,9 +234,131 @@ func main() {
 	fmt.Println("👋 Goodbye!")
 }
 
+// 🐱 CATBOX UPLOAD FUNCTION
+func UploadToCatbox(data []byte, filename string) (string, error) {
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	part, _ := writer.CreateFormFile("fileToUpload", filename)
+	part.Write(data)
+	writer.WriteField("reqtype", "fileupload")
+	writer.Close()
 
+	req, _ := http.NewRequest("POST", "https://catbox.moe/user/api.php", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-// ✅ ⚡ بوٹ کنیکٹ (Same logic, slightly cleaned up)
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	return string(respBody), nil
+}
+
+// 🔥 HELPER: Save Message to Mongo (Fixed Context)
+func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waProto.Message, isFromMe bool, ts uint64) {
+	if chatHistoryCollection == nil {
+		return
+	}
+
+	var msgType, content, senderName string
+	timestamp := time.Unix(int64(ts), 0)
+
+	isGroup := strings.Contains(chatID, "@g.us")
+	isChannel := strings.Contains(chatID, "@newsletter")
+
+	jid, _ := types.ParseJID(chatID)
+	// ✅ Fixed: Added context.Background()
+	if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
+		senderName = contact.FullName
+		if senderName == "" {
+			senderName = contact.PushName
+		}
+	} else {
+		// ✅ Fixed: Added context.Background()
+		if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil {
+			senderName = contact.PushName
+		}
+	}
+	if senderName == "" {
+		senderName = strings.Split(chatID, "@")[0]
+	}
+
+	if txt := getText(msg); txt != "" {
+		msgType = "text"
+		content = txt
+	} else if msg.ImageMessage != nil {
+		msgType = "image"
+		data, err := client.Download(context.Background(), msg.ImageMessage)
+		if err == nil {
+			encoded := base64.StdEncoding.EncodeToString(data)
+			content = "data:image/jpeg;base64," + encoded
+		}
+	} else if msg.VideoMessage != nil {
+		msgType = "video"
+		data, err := client.Download(context.Background(), msg.VideoMessage)
+		if err == nil {
+			url, err := UploadToCatbox(data, "video.mp4")
+			if err == nil {
+				content = url
+			}
+		}
+	} else if msg.AudioMessage != nil {
+		msgType = "audio"
+		data, err := client.Download(context.Background(), msg.AudioMessage)
+		if err == nil {
+			if len(data) > 10*1024*1024 {
+				url, err := UploadToCatbox(data, "audio.ogg")
+				if err == nil {
+					content = url
+				}
+			} else {
+				encoded := base64.StdEncoding.EncodeToString(data)
+				content = "data:audio/ogg;base64," + encoded
+			}
+		}
+	} else if msg.DocumentMessage != nil {
+		msgType = "file"
+		data, err := client.Download(context.Background(), msg.DocumentMessage)
+		if err == nil {
+			fname := msg.DocumentMessage.GetFileName()
+			if fname == "" {
+				fname = "file.bin"
+			}
+			url, err := UploadToCatbox(data, fname)
+			if err == nil {
+				content = url
+			}
+		}
+	} else {
+		return
+	}
+
+	if content == "" {
+		return
+	}
+
+	doc := ChatMessage{
+		BotID:      botID,
+		ChatID:     chatID,
+		Sender:     chatID,
+		SenderName: senderName,
+		Type:       msgType,
+		Content:    content,
+		IsFromMe:   isFromMe,
+		Timestamp:  timestamp,
+		IsGroup:    isGroup,
+		IsChannel:  isChannel,
+	}
+
+	_, err := chatHistoryCollection.InsertOne(context.Background(), doc)
+	if err != nil {
+		fmt.Printf("❌ Mongo Save Error: %v\n", err)
+	}
+}
+
+// ⚡ بوٹ کنیکٹ (Same logic)
 func ConnectNewSession(device *store.Device) {
 	rawID := device.ID.User
 	cleanID := getCleanID(rawID)
@@ -275,7 +396,7 @@ func ConnectNewSession(device *store.Device) {
 		fmt.Printf("❌ [CONNECT ERROR] Bot %s: %v\n", cleanID, err)
 		return
 	}
-    go StartKeepAliveLoop(newBotClient) 
+	go StartKeepAliveLoop(newBotClient)
 	clientsMutex.Lock()
 	activeClients[cleanID] = newBotClient
 	clientsMutex.Unlock()
@@ -283,49 +404,35 @@ func ConnectNewSession(device *store.Device) {
 	fmt.Printf("✅ [CONNECTED] Bot: %s | Prefix: %s | Status: Ready\n", cleanID, p)
 }
 
-// 🔄 یہ فنکشن ہر بوٹ کے کنیکٹ ہونے پر کال کریں
 func StartKeepAliveLoop(client *whatsmeow.Client) {
 	go func() {
 		for {
-			// اگر کلائنٹ کنیکٹ نہیں ہے یا نِل ہے تو لوپ روک دیں
 			if client == nil || !client.IsConnected() {
 				time.Sleep(10 * time.Second)
 				continue
 			}
-
-			// ⚡ سیٹنگ چیک کریں
 			dataMutex.RLock()
 			isEnabled := data.AlwaysOnline
 			dataMutex.RUnlock()
-
-			// ✅ اگر آپشن آن ہے تو پریزنس بھیجیں
 			if isEnabled {
-				err := client.SendPresence(context.Background(), types.PresenceAvailable)
-				if err != nil {
-					// خاموشی سے اگنور کریں یا لاگ کریں
-				}
+				client.SendPresence(context.Background(), types.PresenceAvailable)
 			}
-
-			// ⏳ 25 سیکنڈ کا وقفہ (تاکہ واٹس ایپ آف لائن نہ کرے)
 			time.Sleep(30 * time.Second)
 		}
 	}()
 }
 
-
 func updatePrefixDB(botID string, newPrefix string) {
 	prefixMutex.Lock()
 	botPrefixes[botID] = newPrefix
 	prefixMutex.Unlock()
-
 	err := rdb.Set(ctx, "prefix:"+botID, newPrefix, 0).Err()
 	if err != nil {
 		fmt.Printf("❌ [REDIS ERR] Could not save prefix: %v\n", err)
 	}
 }
 
-// ... (باقی ویب روٹس سیم ہیں) ...
-
+// ... (Baqi helper functions like serveHTML, servePicture, etc.) ...
 func serveHTML(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "web/index.html")
 }
@@ -341,16 +448,13 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-
 	wsClients[conn] = true
 	defer delete(wsClients, conn)
-
 	status := map[string]interface{}{
 		"connected": client != nil && client.IsConnected(),
 		"session":   client != nil && client.Store.ID != nil,
 	}
 	conn.WriteJSON(status)
-
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
@@ -367,7 +471,6 @@ func broadcastWS(data interface{}) {
 
 func handleDelAllAPI(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("🗑️ [API] Deleting all sessions from POSTGRES...")
-
 	clientsMutex.Lock()
 	for id, c := range activeClients {
 		fmt.Printf("🔌 Disconnecting: %s\n", id)
@@ -375,12 +478,10 @@ func handleDelAllAPI(w http.ResponseWriter, r *http.Request) {
 		delete(activeClients, id)
 	}
 	clientsMutex.Unlock()
-
 	devices, _ := container.GetAllDevices(context.Background())
 	for _, dev := range devices {
 		dev.Delete(context.Background())
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"success":true, "message":"All sessions wiped from Database"}`)
 }
@@ -393,14 +494,12 @@ func handleDelNumberAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	targetNum := parts[2]
 	fmt.Printf("🗑️ [API] Deleting session for: %s\n", targetNum)
-
 	clientsMutex.Lock()
 	if c, ok := activeClients[getCleanID(targetNum)]; ok {
 		c.Disconnect()
 		delete(activeClients, getCleanID(targetNum))
 	}
 	clientsMutex.Unlock()
-
 	devices, _ := container.GetAllDevices(context.Background())
 	deleted := false
 	for _, dev := range devices {
@@ -410,7 +509,6 @@ func handleDelNumberAPI(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	if deleted {
 		fmt.Fprintf(w, `{"success":true, "message":"Session deleted for %s"}`, targetNum)
@@ -424,24 +522,19 @@ func handlePairAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"Method not allowed"}`, 405)
 		return
 	}
-
 	var req struct {
 		Number string `json:"number"`
 	}
-
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"Invalid JSON"}`, 400)
 		return
 	}
-
 	number := strings.TrimSpace(req.Number)
 	number = strings.ReplaceAll(number, "+", "")
 	number = strings.ReplaceAll(number, " ", "")
 	number = strings.ReplaceAll(number, "-", "")
 	cleanNum := getCleanID(number)
-
 	fmt.Printf("📱 [PAIRING] New request for: %s on POSTGRES\n", cleanNum)
-
 	devices, _ := container.GetAllDevices(context.Background())
 	for _, dev := range devices {
 		if getCleanID(dev.ID.User) == cleanNum {
@@ -455,36 +548,28 @@ func handlePairAPI(w http.ResponseWriter, r *http.Request) {
 			dev.Delete(context.Background())
 		}
 	}
-
 	newDevice := container.NewDevice()
 	tempClient := whatsmeow.NewClient(newDevice, waLog.Stdout("Pairing", "INFO", true))
-
 	tempClient.AddEventHandler(func(evt interface{}) {
 		handler(tempClient, evt)
 	})
-
 	err := tempClient.Connect()
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), 500)
 		return
 	}
-
 	time.Sleep(5 * time.Second)
-
 	code, err := tempClient.PairPhone(context.Background(), number, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
 		tempClient.Disconnect()
 		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), 500)
 		return
 	}
-
 	fmt.Printf("✅ [CODE] Generated for %s: %s\n", cleanNum, code)
-
 	broadcastWS(map[string]interface{}{
 		"event": "pairing_code",
 		"code":  code,
 	})
-
 	go func() {
 		for i := 0; i < 60; i++ {
 			time.Sleep(1 * time.Second)
@@ -498,68 +583,48 @@ func handlePairAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		tempClient.Disconnect()
 	}()
-
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"success":true,"code":"%s"}`, code)
 }
 
 func handlePairAPILegacy(w http.ResponseWriter, r *http.Request) {
-	// (یہ فنکشن بھی وہی Postgres logic استعمال کرے گا کیونکہ container اب صرف Postgres ہے)
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) < 4 {
 		http.Error(w, `{"error":"Invalid URL"}`, 400)
 		return
 	}
-
 	number := strings.TrimSpace(parts[3])
 	number = strings.ReplaceAll(number, "+", "")
 	number = strings.ReplaceAll(number, " ", "")
 	number = strings.ReplaceAll(number, "-", "")
-
 	if len(number) < 10 {
 		http.Error(w, `{"error":"Invalid number"}`, 400)
 		return
 	}
-
 	fmt.Printf("📱 Pairing: %s\n", number)
-
 	if client != nil && client.IsConnected() {
 		client.Disconnect()
 		time.Sleep(10 * time.Second)
 	}
-
 	newDevice := container.NewDevice()
 	tempClient := whatsmeow.NewClient(newDevice, waLog.Stdout("Pairing", "INFO", true))
-
 	SetGlobalClient(tempClient)
 	tempClient.AddEventHandler(func(evt interface{}) {
 		handler(tempClient, evt)
 	})
-
 	err := tempClient.Connect()
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), 500)
 		return
 	}
-
 	time.Sleep(10 * time.Second)
-
-	code, err := tempClient.PairPhone(
-		context.Background(),
-		number,
-		true,
-		whatsmeow.PairClientChrome,
-		"Chrome (Linux)",
-	)
-
+	code, err := tempClient.PairPhone(context.Background(), number, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
 		tempClient.Disconnect()
 		http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), 500)
 		return
 	}
-
 	fmt.Printf("✅ Code: %s\n", code)
-
 	go func() {
 		for i := 0; i < 60; i++ {
 			time.Sleep(1 * time.Second)
@@ -572,7 +637,6 @@ func handlePairAPILegacy(w http.ResponseWriter, r *http.Request) {
 		}
 		tempClient.Disconnect()
 	}()
-
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"success":true,"code":"%s"}`, code)
 }
@@ -581,17 +645,14 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	if client != nil && client.IsConnected() {
 		client.Disconnect()
 	}
-
 	devices, _ := container.GetAllDevices(context.Background())
 	for _, device := range devices {
 		device.Delete(context.Background())
 	}
-
 	broadcastWS(map[string]interface{}{
 		"event":     "session_deleted",
 		"connected": false,
 	})
-
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"success":true,"message":"Session deleted"}`)
 }
@@ -603,17 +664,14 @@ func StartAllBots(container *sqlstore.Container) {
 		fmt.Printf("❌ [DB-ERROR] Could not load sessions: %v\n", err)
 		return
 	}
-
 	fmt.Printf("\n🤖 Starting Multi-Bot System (Found %d entries in DB)\n", len(devices))
 	seenNumbers := make(map[string]bool)
-
 	for _, device := range devices {
 		botNum := getCleanID(device.ID.User)
 		if seenNumbers[botNum] {
 			continue
 		}
 		seenNumbers[botNum] = true
-
 		go func(dev *store.Device) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -622,129 +680,77 @@ func StartAllBots(container *sqlstore.Container) {
 			}()
 			ConnectNewSession(dev)
 		}(device)
-		time.Sleep(2 * time.Second) // Postgres تیز ہے، اس لئے وقفہ کم کر دیا
+		time.Sleep(2 * time.Second)
 	}
 	go monitorNewSessions(container)
 }
 
-// ✅ یہ فنکشن مین (main) کے اندر StartAllBots کے بعد کال کریں
 func PreloadAllGroupSettings() {
-    if rdb == nil { return }
-    
-    fmt.Println("🚀 [RAM] Preloading all group settings into Memory...")
-    
-    // Redis سے تمام سیٹنگز کی Keys منگوائیں
-    keys, err := rdb.Keys(ctx, "group_settings:*").Result()
-    if err != nil {
-        fmt.Println("⚠️ [RAM] Failed to fetch keys:", err)
-        return
-    }
-
-    count := 0
-    for _, key := range keys {
-        val, err := rdb.Get(ctx, key).Result()
-        if err == nil {
-            var s GroupSettings
-            if json.Unmarshal([]byte(val), &s) == nil {
-                // Key سے botID اور chatID الگ کریں
-                // Key format: "group_settings:923xx:1203xx@g.us"
-                parts := strings.Split(key, ":")
-                if len(parts) >= 3 {
-                    // uniqueKey = "923xx:1203xx@g.us"
-                    uniqueKey := parts[1] + ":" + parts[2]
-                    
-                    // 💾 سیدھا RAM میں سٹور کریں
-                    cacheMutex.Lock()
-                    groupCache[uniqueKey] = &s
-                    cacheMutex.Unlock()
-                    count++
-                }
-            }
-        }
-    }
-    fmt.Printf("✅ [RAM] Successfully loaded settings for %d groups!\n", count)
-}
-
-// ⚡ آپٹییمائزڈ گیٹر (صرف RAM استعمال کرے گا)
-func getGroupSettings(botID, chatID string) *GroupSettings {
-    uniqueKey := botID + ":" + chatID
-
-    // 1. سب سے پہلے RAM چیک کریں (0ms Latency)
-    cacheMutex.RLock()
-    s, exists := groupCache[uniqueKey]
-    cacheMutex.RUnlock()
-
-    if exists {
-        return s
-    }
-
-    // 2. اگر RAM میں نہیں ہے (شاید نیا گروپ ہے)، تب Redis چیک کریں
-    // (یہ بہت کم ہوگا کیونکہ ہم نے Preload کر لیا ہے)
-    if rdb != nil {
-        redisKey := "group_settings:" + uniqueKey
-        val, err := rdb.Get(ctx, redisKey).Result()
-        if err == nil {
-            var loadedSettings GroupSettings
-            if json.Unmarshal([]byte(val), &loadedSettings) == nil {
-                cacheMutex.Lock()
-                groupCache[uniqueKey] = &loadedSettings
-                cacheMutex.Unlock()
-                return &loadedSettings
-            }
-        }
-    }
-
-    // 3. ڈیفالٹ
-    return &GroupSettings{
-        ChatID: chatID, Mode: "public", Antilink: false, 
-        AntilinkAdmin: true, AntilinkAction: "delete", Welcome: false,
-    }
-}
-
-func loadPersistentUptime() {
-	if rdb != nil {
-		val, err := rdb.Get(ctx, "total_uptime").Int64()
-		if err == nil {
-			persistentUptime = val
-		}
+	if rdb == nil {
+		return
 	}
-	fmt.Println("⏳ [UPTIME] Persistent uptime loaded from Redis")
-}
-
-func startPersistentUptimeTracker() {
-	ticker := time.NewTicker(1 * time.Minute)
-	go func() {
-		for range ticker.C {
-			persistentUptime += 60
-			if rdb != nil {
-				rdb.Set(ctx, "total_uptime", persistentUptime, 0)
+	fmt.Println("🚀 [RAM] Preloading all group settings into Memory...")
+	keys, err := rdb.Keys(ctx, "group_settings:*").Result()
+	if err != nil {
+		fmt.Println("⚠️ [RAM] Failed to fetch keys:", err)
+		return
+	}
+	count := 0
+	for _, key := range keys {
+		val, err := rdb.Get(ctx, key).Result()
+		if err == nil {
+			var s GroupSettings
+			if json.Unmarshal([]byte(val), &s) == nil {
+				parts := strings.Split(key, ":")
+				if len(parts) >= 3 {
+					uniqueKey := parts[1] + ":" + parts[2]
+					cacheMutex.Lock()
+					groupCache[uniqueKey] = &s
+					cacheMutex.Unlock()
+					count++
+				}
 			}
 		}
-	}()
+	}
+	fmt.Printf("✅ [RAM] Successfully loaded settings for %d groups!\n", count)
 }
 
-func SetGlobalClient(c *whatsmeow.Client) {
-	globalClient = c
+func getGroupSettings(botID, chatID string) *GroupSettings {
+	uniqueKey := botID + ":" + chatID
+	cacheMutex.RLock()
+	s, exists := groupCache[uniqueKey]
+	cacheMutex.RUnlock()
+	if exists {
+		return s
+	}
+	if rdb != nil {
+		redisKey := "group_settings:" + uniqueKey
+		val, err := rdb.Get(ctx, redisKey).Result()
+		if err == nil {
+			var loadedSettings GroupSettings
+			if json.Unmarshal([]byte(val), &loadedSettings) == nil {
+				cacheMutex.Lock()
+				groupCache[uniqueKey] = &loadedSettings
+				cacheMutex.Unlock()
+				return &loadedSettings
+			}
+		}
+	}
+	return &GroupSettings{
+		ChatID: chatID, Mode: "public", Antilink: false,
+		AntilinkAdmin: true, AntilinkAction: "delete", Welcome: false,
+	}
 }
 
-// ⚡ سیٹنگز حاصل کرنے کا فنکشن (اب بوٹ آئی ڈی بھی مانگے گا)
-
-// ⚡ سیٹنگز محفوظ کرنے کا فنکشن (بوٹ آئی ڈی کے ساتھ)
 func saveGroupSettings(botID string, s *GroupSettings) {
 	uniqueKey := botID + ":" + s.ChatID
-
-	// 1. میموری (RAM) میں اپڈیٹ کریں
 	cacheMutex.Lock()
 	groupCache[uniqueKey] = s
 	cacheMutex.Unlock()
-
-	// 2. Redis میں محفوظ کریں (الگ کی کے ساتھ)
 	if rdb != nil {
 		jsonData, err := json.Marshal(s)
 		if err == nil {
 			redisKey := "group_settings:" + uniqueKey
-			
-			// Redis میں سیو کریں (No Expiry)
 			err := rdb.Set(ctx, redisKey, jsonData, 0).Err()
 			if err != nil {
 				fmt.Printf("⚠️ [REDIS ERROR] Failed to save settings: %v\n", err)
@@ -756,20 +762,16 @@ func saveGroupSettings(botID string, s *GroupSettings) {
 func monitorNewSessions(container *sqlstore.Container) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
-
 	for range ticker.C {
 		devices, err := container.GetAllDevices(context.Background())
 		if err != nil {
 			continue
 		}
-
 		for _, device := range devices {
 			botID := getCleanID(device.ID.User)
-
 			clientsMutex.RLock()
 			_, exists := activeClients[botID]
 			clientsMutex.RUnlock()
-
 			if !exists {
 				fmt.Printf("\n🆕 [AUTO-CONNECT] New session detected: %s. Connecting...\n", botID)
 				go ConnectNewSession(device)
@@ -781,216 +783,40 @@ func monitorNewSessions(container *sqlstore.Container) {
 
 // 1. HTML Page Serve
 func serveListsHTML(w http.ResponseWriter, r *http.Request) {
-    http.ServeFile(w, r, "web/lists.html")
+	http.ServeFile(w, r, "web/lists.html")
 }
 
 // 2. Active Sessions API
 func handleGetSessions(w http.ResponseWriter, r *http.Request) {
-    clientsMutex.RLock()
-    var sessions []string
-    for id := range activeClients {
-        sessions = append(sessions, id)
-    }
-    clientsMutex.RUnlock()
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(sessions)
-}
-
-
-// 4. Get Messages (Lightweight - No Base64)
-func handleGetMessages(w http.ResponseWriter, r *http.Request) {
-	if chatHistoryCollection == nil { http.Error(w, "MongoDB not connected", 500); return }
-	botID := r.URL.Query().Get("bot_id")
-	chatID := r.URL.Query().Get("chat_id")
-
-	filter := bson.M{"bot_id": botID, "chat_id": chatID}
-	opts := options.Find().SetSort(bson.D{{Key: "timestamp", Value: 1}})
-
-	cursor, err := chatHistoryCollection.Find(context.Background(), filter, opts)
-	if err != nil { http.Error(w, err.Error(), 500); return }
-
-	var messages []ChatMessage
-	if err = cursor.All(context.Background(), &messages); err != nil {
-		http.Error(w, err.Error(), 500); return
+	clientsMutex.RLock()
+	var sessions []string
+	for id := range activeClients {
+		sessions = append(sessions, id)
 	}
-
-	// 🚀 OPTIMIZATION: Strip Base64 Data
-	for i := range messages {
-		// اگر ڈیٹا Base64 ہے (یعنی بہت بڑا ہے)، تو اسے لسٹ میں مت بھیجو
-		if len(messages[i].Content) > 500 && strings.HasPrefix(messages[i].Content, "data:") {
-			messages[i].Content = "MEDIA_WAITING" // Placeholder Flag
-		}
-	}
-
+	clientsMutex.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(messages)
+	json.NewEncoder(w).Encode(sessions)
 }
 
-// 5. Get Single Media (Full Content) ✅ NEW
-func handleGetMedia(w http.ResponseWriter, r *http.Request) {
-	if chatHistoryCollection == nil { http.Error(w, "MongoDB not connected", 500); return }
-	
-	msgID := r.URL.Query().Get("msg_id")
-	if msgID == "" { http.Error(w, "Message ID required", 400); return }
-
-	// صرف ایک میسج ڈھونڈیں
-	filter := bson.M{"message_id": msgID}
-	var msg ChatMessage
-	err := chatHistoryCollection.FindOne(context.Background(), filter).Decode(&msg)
-	if err != nil {
-		http.Error(w, "Media not found", 404)
+// 3. Get Chats (FIXED: Context & Name Logic)
+func handleGetChats(w http.ResponseWriter, r *http.Request) {
+	if chatHistoryCollection == nil {
+		http.Error(w, "MongoDB not connected", 500)
+		return
+	}
+	botID := r.URL.Query().Get("bot_id")
+	if botID == "" {
+		http.Error(w, "Bot ID required", 400)
 		return
 	}
 
-	// صرف کانٹینٹ واپس بھیجیں
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"content": msg.Content,
-	})
-}
-
-// 🐱 CATBOX UPLOAD FUNCTION (یہ غائب تھا)
-func UploadToCatbox(data []byte, filename string) (string, error) {
-	body := new(bytes.Buffer)
-	writer := multipart.NewWriter(body)
-
-	// File Part
-	part, _ := writer.CreateFormFile("fileToUpload", filename)
-	part.Write(data)
-
-	// Type Part
-	writer.WriteField("reqtype", "fileupload")
-	writer.Close()
-
-	req, _ := http.NewRequest("POST", "https://catbox.moe/user/api.php", body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	return string(respBody), nil
-}
-
-// 🔥 HELPER: Save Message to Mongo (Fixed Download & Variable)
-// 📦 STRUCT UPDATE (اسے main.go یا commands.go میں جہاں struct ہے وہاں replace کریں)
-
-// 🔥 HELPER: Save Message to Mongo (Updated with 10MB Logic & Tabs)
-// 🔥 HELPER: Save Message to Mongo (FIXED: Context & Imports)
-func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waProto.Message, isFromMe bool, ts uint64) {
-	if chatHistoryCollection == nil { return }
-
-	var msgType, content, senderName string
-	timestamp := time.Unix(int64(ts), 0)
-	
-	// 🏷️ Identify Chat Type
-	isGroup := strings.Contains(chatID, "@g.us")
-	isChannel := strings.Contains(chatID, "@newsletter")
-
-	// 🕵️ NAME LOOKUP (FIXED CONTEXT ERROR)
-	jid, _ := types.ParseJID(chatID)
-    // ✅ FIX: Added context.Background() inside GetContact
-	if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
-		senderName = contact.FullName
-		if senderName == "" { senderName = contact.PushName }
-	} else {
-        // ✅ FIX: Added context.Background() here too
-        if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil {
-		    senderName = contact.PushName
-        }
-	}
-	if senderName == "" { senderName = strings.Split(chatID, "@")[0] }
-
-	// 📂 MEDIA HANDLING
-	if txt := getText(msg); txt != "" {
-		msgType = "text"
-		content = txt
-	} else if msg.ImageMessage != nil {
-		// --- IMAGE ---
-		msgType = "image"
-		data, err := client.Download(context.Background(), msg.ImageMessage)
-		if err == nil {
-			encoded := base64.StdEncoding.EncodeToString(data)
-			content = "data:image/jpeg;base64," + encoded
-		}
-	} else if msg.VideoMessage != nil {
-		// --- VIDEO ---
-		msgType = "video"
-		data, err := client.Download(context.Background(), msg.VideoMessage)
-		if err == nil {
-			url, err := UploadToCatbox(data, "video.mp4")
-			if err == nil { content = url }
-		}
-	} else if msg.AudioMessage != nil {
-		// --- AUDIO ---
-		msgType = "audio"
-		data, err := client.Download(context.Background(), msg.AudioMessage)
-		if err == nil {
-			if len(data) > 10*1024*1024 {
-				url, err := UploadToCatbox(data, "audio.ogg")
-				if err == nil { content = url }
-			} else {
-				encoded := base64.StdEncoding.EncodeToString(data)
-				content = "data:audio/ogg;base64," + encoded
-			}
-		}
-	} else if msg.DocumentMessage != nil {
-		msgType = "file"
-		data, err := client.Download(context.Background(), msg.DocumentMessage)
-		if err == nil {
-			fname := msg.DocumentMessage.GetFileName()
-			if fname == "" { fname = "file.bin" }
-			url, err := UploadToCatbox(data, fname)
-			if err == nil { content = url }
-		}
-	} else {
-		return 
-	}
-
-	if content == "" { return }
-
-	doc := ChatMessage{
-		BotID:      botID,
-		ChatID:     chatID,
-		Sender:     chatID,
-		SenderName: senderName,
-		Type:       msgType,
-		Content:    content,
-		IsFromMe:   isFromMe,
-		Timestamp:  timestamp,
-		IsGroup:    isGroup,
-		IsChannel:  isChannel,
-	}
-
-	_, err := chatHistoryCollection.InsertOne(context.Background(), doc)
-	if err != nil {
-		fmt.Printf("❌ Mongo Save Error: %v\n", err)
-	}
-}
-
-// 📦 Chat Item Structure
-type ChatItem struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Type string `json:"type"` // group, channel, user
-}
-
-// 3. Get Chats (Updated: Fetches Names & Types)
-func handleGetChats(w http.ResponseWriter, r *http.Request) {
-	if chatHistoryCollection == nil { http.Error(w, "MongoDB not connected", 500); return }
-	botID := r.URL.Query().Get("bot_id")
-	if botID == "" { http.Error(w, "Bot ID required", 400); return }
-
-	// 1. Get Distinct IDs from Mongo
 	filter := bson.M{"bot_id": botID}
 	rawChats, err := chatHistoryCollection.Distinct(context.Background(), "chat_id", filter)
-	if err != nil { http.Error(w, err.Error(), 500); return }
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 
-	// 2. Get Active Client for Name Lookup
 	clientsMutex.RLock()
 	client, isConnected := activeClients[botID]
 	clientsMutex.RUnlock()
@@ -1002,33 +828,35 @@ func handleGetChats(w http.ResponseWriter, r *http.Request) {
 		cleanName := ""
 		chatType := "user"
 
-		if strings.Contains(chatID, "@g.us") { chatType = "group" }
-		if strings.Contains(chatID, "@newsletter") { chatType = "channel" }
+		if strings.Contains(chatID, "@g.us") {
+			chatType = "group"
+		}
+		if strings.Contains(chatID, "@newsletter") {
+			chatType = "channel"
+		}
 
-		// 🕵️ PRIORITY 1: Check WhatsApp Store (Real-time Name)
 		if isConnected && client != nil {
 			jid, _ := types.ParseJID(chatID)
-			if contact, err := client.Store.Contacts.GetContact(jid); err == nil && contact.Found {
+			// ✅ FIX: Added context.Background() and removed contact.Name
+			if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
 				cleanName = contact.FullName
-				if cleanName == "" { cleanName = contact.PushName }
-				if cleanName == "" { cleanName = contact.Name } // Sometimes just Name
+				if cleanName == "" {
+					cleanName = contact.PushName
+				}
 			}
 		}
 
-		// 🕵️ PRIORITY 2: Check MongoDB (Old saved Name)
 		if cleanName == "" {
 			var lastMsg ChatMessage
-			// Find the most recent message for this chat to get the latest saved name
-			err := chatHistoryCollection.FindOne(context.Background(), 
-				bson.M{"bot_id": botID, "chat_id": chatID}, 
+			err := chatHistoryCollection.FindOne(context.Background(),
+				bson.M{"bot_id": botID, "chat_id": chatID},
 				options.FindOne().SetSort(bson.D{{Key: "timestamp", Value: -1}})).Decode(&lastMsg)
-			
+
 			if err == nil && lastMsg.SenderName != "" && lastMsg.SenderName != chatID {
 				cleanName = lastMsg.SenderName
 			}
 		}
 
-		// 🕵️ PRIORITY 3: Fallback to formatted ID
 		if cleanName == "" {
 			cleanName = "+" + strings.Split(chatID, "@")[0]
 		}
@@ -1044,7 +872,68 @@ func handleGetChats(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(chatList)
 }
 
-// 6. Get Profile Picture (New API)
+// 4. Get Messages
+func handleGetMessages(w http.ResponseWriter, r *http.Request) {
+	if chatHistoryCollection == nil {
+		http.Error(w, "MongoDB not connected", 500)
+		return
+	}
+	botID := r.URL.Query().Get("bot_id")
+	chatID := r.URL.Query().Get("chat_id")
+
+	filter := bson.M{"bot_id": botID, "chat_id": chatID}
+	opts := options.Find().SetSort(bson.D{{Key: "timestamp", Value: 1}})
+
+	cursor, err := chatHistoryCollection.Find(context.Background(), filter, opts)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	var messages []ChatMessage
+	if err = cursor.All(context.Background(), &messages); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	for i := range messages {
+		if len(messages[i].Content) > 500 && strings.HasPrefix(messages[i].Content, "data:") {
+			messages[i].Content = "MEDIA_WAITING"
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(messages)
+}
+
+// 5. Get Single Media
+func handleGetMedia(w http.ResponseWriter, r *http.Request) {
+	if chatHistoryCollection == nil {
+		http.Error(w, "MongoDB not connected", 500)
+		return
+	}
+
+	msgID := r.URL.Query().Get("msg_id")
+	if msgID == "" {
+		http.Error(w, "Message ID required", 400)
+		return
+	}
+
+	filter := bson.M{"message_id": msgID}
+	var msg ChatMessage
+	err := chatHistoryCollection.FindOne(context.Background(), filter).Decode(&msg)
+	if err != nil {
+		http.Error(w, "Media not found", 404)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"content": msg.Content,
+	})
+}
+
+// 6. Get Profile Picture (FIXED: Context)
 func handleGetAvatar(w http.ResponseWriter, r *http.Request) {
 	botID := r.URL.Query().Get("bot_id")
 	chatID := r.URL.Query().Get("chat_id")
@@ -1059,19 +948,17 @@ func handleGetAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jid, _ := types.ParseJID(chatID)
-	
-	// Fetch Profile Picture URL
-	pic, err := client.GetProfilePictureInfo(jid, &whatsmeow.GetProfilePictureParams{
-		Preview: true, // Small thumbnail is faster
+
+	// ✅ FIX: Added context.Background()
+	pic, err := client.GetProfilePictureInfo(context.Background(), jid, &whatsmeow.GetProfilePictureParams{
+		Preview: true,
 	})
 
 	if err != nil || pic == nil {
-		// Return 404 if no picture (Frontend will show default avatar)
 		http.Error(w, "No avatar", 404)
 		return
 	}
 
-	// Return URL
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"url": pic.URL})
 }
