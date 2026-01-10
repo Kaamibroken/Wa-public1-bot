@@ -48,33 +48,33 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 		return
 	}
 
-	// ⚡ FIX: فیچرز کو بھی بیک گراؤنڈ میں سنیں تاکہ مین تھریڈ فری رہے
+	// ⚡ فیچرز (اینٹی لنک، ویلکم وغیرہ) کو بیک گراؤنڈ میں سنیں
 	go ListenForFeatures(botClient, evt)
 
 	switch v := evt.(type) {
 
 	case *events.Message:
-		// 🔥 سب سے اہم فلٹر
-		// چیک کریں کہ میسج 1 منٹ سے زیادہ پرانا تو نہیں
-		if time.Since(v.Info.Timestamp) > 1*time.Minute {
-			return
-		}
+		// 🔥 ٹائم فلٹر: 1 منٹ سے پرانے میسجز پر کمانڈز نہ چلائیں
+		// لیکن ڈیٹا بیس میں سیو کرنے کے لیے یہ فلٹر نہ لگائیں تاکہ ہسٹری مکمل رہے
+		isRecent := time.Since(v.Info.Timestamp) < 1*time.Minute
 
-		// 🚫 اسٹیٹس اور اپنے میسجز کو اگنور کریں
+		// 🚫 اسٹیٹس اپڈیٹس کو اگنور کریں
 		if v.Info.Chat.String() == "status@broadcast" {
 			return
 		}
 
-		// 🍃 [NEW] Save Live Message to Mongo (Background)
+		// 🍃 [MONGO] Save Live Message (Text, Media, Stickers) to Database
 		go func() {
 			botID := getCleanID(botClient.Store.ID.User)
 			saveMessageToMongo(botClient, botID, v.Info.Chat.String(), v.Message, v.Info.IsFromMe, uint64(v.Info.Timestamp.Unix()))
 		}()
 
-		// ✅ میسج کو بیک گراؤنڈ میں پروسیس کریں (کمانڈز کے لیے)
-		go processMessage(botClient, v)
+		// ✅ کمانڈز صرف تب چلائیں جب میسج نیا ہو
+		if isRecent {
+			go processMessage(botClient, v)
+		}
 
-	// 🔥🔥🔥 [FIXED] ہسٹری سنک کو بیک گراؤنڈ میں ہینڈل کریں 🔥🔥🔥
+	// 🔥🔥🔥 [FIXED] ہسٹری سنک (پرانی چیٹس لوڈ کرنا) 🔥🔥🔥
 	case *events.HistorySync:
 		go func() {
 			if v.Data == nil || len(v.Data.Conversations) == 0 {
@@ -84,13 +84,9 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 			botID := getCleanID(botClient.Store.ID.User)
 			// fmt.Printf("📜 [HISTORY] Syncing %d conversations for %s...\n", len(v.Data.Conversations), botID)
 
-			// ہسٹری کے میسجز کو لوپ کر کے مونگو میں ڈالیں
 			for _, conv := range v.Data.Conversations {
-				// ✅ FIX: conv.ID ایک پوائنٹر ہے، اسے محفوظ طریقے سے سٹرنگ میں تبدیل کریں
-				chatID := ""
-				if conv.ID != nil {
-					chatID = *conv.ID
-				}
+				// ✅ FIX: conv.ID ایک سٹرنگ ہے، اسے براہ راست استعمال کریں
+				chatID := conv.ID
 
 				for _, histMsg := range conv.Messages {
 					webMsg := histMsg.Message
@@ -109,17 +105,21 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 						ts = *webMsg.MessageTimestamp
 					}
 
-					// ✅ FIX: اب chatID سٹرنگ ہے، ایرر نہیں آئے گا
+					// ✅ Save History Message
 					saveMessageToMongo(botClient, botID, chatID, webMsg.Message, isFromMe, ts)
 				}
 			}
 		}()
 
 	case *events.Connected:
-		fmt.Printf("🟢 [ONLINE] Bot %s connected!\n", botClient.Store.ID.User)
+		if botClient.Store.ID != nil {
+			fmt.Printf("🟢 [ONLINE] Bot %s connected!\n", botClient.Store.ID.User)
+		}
 
 	case *events.LoggedOut:
-		fmt.Printf("🔴 [LOGGED OUT] Bot %s\n", botClient.Store.ID.User)
+		if botClient.Store.ID != nil {
+			fmt.Printf("🔴 [LOGGED OUT] Bot %s\n", botClient.Store.ID.User)
+		}
 	}
 }
 
