@@ -279,7 +279,7 @@ func UploadToCatbox(data []byte, filename string) (string, error) {
 	return string(respBody), nil
 }
 
-// 🔥 HELPER: Save Message to Mongo
+// 🔥 HELPER: Save Message to Mongo (Fixed Context)
 func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waProto.Message, isFromMe bool, ts uint64) {
 	if chatHistoryCollection == nil {
 		return
@@ -292,16 +292,16 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, msg *waP
 	isChannel := strings.Contains(chatID, "@newsletter")
 
 	jid, _ := types.ParseJID(chatID)
-
+	
 	// ✅ Smart Name Lookup: Check Contact Store first
-	if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
+	if contact, err := client.Store.Contacts.GetContact(jid); err == nil && contact.Found {
 		senderName = contact.FullName
 		if senderName == "" {
 			senderName = contact.PushName
 		}
 	} else {
 		// Fallback
-		if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil {
+		if contact, err := client.Store.Contacts.GetContact(jid); err == nil {
 			senderName = contact.PushName
 		}
 	}
@@ -461,7 +461,8 @@ func updatePrefixDB(botID string, newPrefix string) {
 	}
 }
 
-func serveHTML(w http.ResponseWriter, r *http.Request) {
+// ✅ serveListsHTML
+func serveListsHTML(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "web/lists.html")
 }
 
@@ -497,6 +498,7 @@ func broadcastWS(data interface{}) {
 	}
 }
 
+// ✅ handleDeleteSession
 func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	if client != nil && client.IsConnected() {
 		client.Disconnect()
@@ -858,44 +860,32 @@ func handleGetChats(w http.ResponseWriter, r *http.Request) {
 
 		if strings.Contains(chatID, "@g.us") {
 			chatType = "group"
-			// 👥 GROUP NAME & AVATAR
 			if isConnected && client != nil {
-				// 1. Try Store First
+				// ✅ FIXED: Using Store.ChatSettings (Correct for Groups)
 				if info, err := client.Store.ChatSettings.GetChatSettings(jid); err == nil && info.Name != "" {
 					cleanName = info.Name
-				}
-				// 2. Try Network Fetch (If store failed)
-				if cleanName == "" {
-					// Short timeout to prevent hanging
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					if grp, err := client.GetGroupInfo(ctx, jid); err == nil {
+				} else {
+					// Fallback to Network Call
+					if grp, err := client.GetGroupInfo(jid); err == nil {
 						cleanName = grp.Name
-						cancel()
-					} else {
-						cancel()
 					}
 				}
 			}
 		} else if strings.Contains(chatID, "@newsletter") {
 			chatType = "channel"
-			// 📰 CHANNEL NAME & AVATAR
 			if isConnected && client != nil {
-				// Newsletter info requires network usually
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				if metadata, err := client.GetNewsletterInfo(ctx, jid); err == nil {
+				// ✅ FIXED: Using GetNewsletterInfo
+				if metadata, err := client.GetNewsletterInfo(jid); err == nil {
 					cleanName = metadata.Name
+					// Handle Picture (Pointer check)
 					if metadata.Picture != nil {
 						avatarURL = metadata.Picture.URL
 					}
-					cancel()
-				} else {
-					cancel()
 				}
 			}
 		} else {
-			// 👤 USER NAME
 			if isConnected && client != nil {
-				if contact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil && contact.Found {
+				if contact, err := client.Store.Contacts.GetContact(jid); err == nil && contact.Found {
 					cleanName = contact.FullName
 					if cleanName == "" {
 						cleanName = contact.PushName
@@ -904,18 +894,17 @@ func handleGetChats(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Fallback: Check MongoDB History if name is still empty
 		if cleanName == "" {
 			var lastMsg ChatMessage
 			err := chatHistoryCollection.FindOne(context.Background(),
 				bson.M{"bot_id": botID, "chat_id": chatID, "sender_name": bson.M{"$ne": ""}},
 				options.FindOne().SetSort(bson.D{{Key: "timestamp", Value: -1}})).Decode(&lastMsg)
+
 			if err == nil && lastMsg.SenderName != "" && lastMsg.SenderName != chatID {
 				cleanName = lastMsg.SenderName
 			}
 		}
 
-		// Final Fallback
 		if cleanName == "" {
 			if chatType == "group" {
 				cleanName = "Unknown Group"
@@ -926,15 +915,12 @@ func handleGetChats(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Send fetched name
 		chatList = append(chatList, ChatItem{
 			ID:   chatID,
 			Name: cleanName,
 			Type: chatType,
 		})
-		
-		// Note: avatarURL logic is inside fetchAvatar call in frontend to keep list loading fast
-		_ = avatarURL 
+		_ = avatarURL // Silence unused variable warning
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -964,7 +950,6 @@ func handleGetMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 🚀 OPTIMIZATION: Strip Base64 Data
 	for i := range messages {
 		if len(messages[i].Content) > 500 && strings.HasPrefix(messages[i].Content, "data:") {
 			messages[i].Content = "MEDIA_WAITING"
@@ -995,12 +980,9 @@ func handleGetMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ⚡ Send data directly
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "ok",
 		"content": msg.Content,
-		"type":    msg.Type,
 	})
 }
 
@@ -1018,21 +1000,17 @@ func handleGetAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jid, _ := types.ParseJID(chatID)
-	
-	// Check if Channel (Newsletter)
+
+	// Check for Channel
 	if strings.Contains(chatID, "@newsletter") {
-		// Channels use GetNewsletterInfo
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if metadata, err := client.GetNewsletterInfo(ctx, jid); err == nil && metadata.Picture != nil {
+		if metadata, err := client.GetNewsletterInfo(jid); err == nil && metadata.Picture != nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"url": metadata.Picture.URL})
 			return
 		}
 	}
 
-	// Default (User/Group)
-	pic, err := client.GetProfilePictureInfo(context.Background(), jid, &whatsmeow.GetProfilePictureParams{
+	pic, err := client.GetProfilePictureInfo(jid, &whatsmeow.GetProfilePictureParams{
 		Preview: true,
 	})
 
