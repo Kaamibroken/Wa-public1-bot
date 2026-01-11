@@ -1081,6 +1081,10 @@ func getFormattedUptime() string {
 }
 
 func sendMenu(client *whatsmeow.Client, v *events.Message) {
+	// 📢 چینل کی سیٹنگز
+	newsletterID := "120363424476167116@newsletter"
+	newsletterName := "Bot Link Hare 👿"
+
 	uptimeStr := getFormattedUptime()
 	rawBotID := client.Store.ID.User
 	botID := getCleanID(rawBotID)
@@ -1221,22 +1225,31 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 		p, p, p, p, p,
 		p, p, p, p, p, p, p, p, p, p, p, p)
 
-	// رپلائی کی معلومات تیار کرنا (جو میسج آیا ہے اس کی آئی ڈی وغیرہ)
+	// 🔥 رپلائی اور چینل کی معلومات کا سیٹ اپ
 	replyContext := &waProto.ContextInfo{
 		StanzaID:      proto.String(v.Info.ID),
 		Participant:   proto.String(v.Info.Sender.String()),
 		QuotedMessage: v.Message,
+
+		// فارورڈ ٹیگ لگانے کے لیے
+		IsForwarded: proto.Bool(true),
+
+		// چینل کا حوالہ (Nothing is Impossible)
+		ForwardedNewsletterMessageInfo: &waProto.ForwardedNewsletterMessageInfo{
+			NewsletterJID:   proto.String(newsletterID),
+			NewsletterName:  proto.String(newsletterName),
+			ServerMessageID: proto.Int32(100),
+		},
 	}
 
 	// 🚀 CACHING LOGIC
 	if cachedMenuImage != nil {
 		fmt.Println("🚀 Using Cached Menu Image (Super Fast)")
 		
-		// ⚠️ اہم: ہم کیشڈ امیج کی کاپی بنا رہے ہیں تاکہ اصل کیش خراب نہ ہو
-		// اور ہم اس مخصوص یوزر کو رپلائی کر سکیں۔
-		imgMsg := *cachedMenuImage // Dereference to copy value
+		// کاپی بنا کر ContextInfo سیٹ کریں
+		imgMsg := *cachedMenuImage 
 		imgMsg.Caption = proto.String(menu)
-		imgMsg.ContextInfo = replyContext // رپلائی سیٹ کر دیا
+		imgMsg.ContextInfo = replyContext // رپلائی + چینل انفو
 
 		client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 			ImageMessage: &imgMsg,
@@ -1250,7 +1263,7 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 	if err == nil {
 		uploadResp, err := client.Upload(context.Background(), imgData, whatsmeow.MediaImage)
 		if err == nil {
-			// کیش کو صرف فائل کی معلومات کے ساتھ محفوظ کریں
+			// کیش کو صرف فائل کی بنیادی معلومات کے ساتھ سیو کریں
 			cachedMenuImage = &waProto.ImageMessage{
 				URL:           proto.String(uploadResp.URL),
 				DirectPath:    proto.String(uploadResp.DirectPath),
@@ -1259,10 +1272,9 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 				FileEncSHA256: uploadResp.FileEncSHA256,
 				FileSHA256:    uploadResp.FileSHA256,
 				FileLength:    proto.Uint64(uint64(len(imgData))),
-				// Caption یہاں سیٹ نہیں کریں گے تاکہ ہر بار نیا لگ سکے
 			}
 			
-			// بھیجنے کے لیے کاپی بنائیں اور رپلائی شامل کریں
+			// بھیجنے کے لیے کاپی بنائیں اور سیاق و سباق (Context) شامل کریں
 			imgMsg := *cachedMenuImage
 			imgMsg.Caption = proto.String(menu)
 			imgMsg.ContextInfo = replyContext
@@ -1274,9 +1286,11 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 		}
 	}
 
-	// اگر تصویر فیل ہو جائے تو سادہ ٹیکسٹ رپلائی
+	// اگر تصویر فیل ہو جائے تو سادہ ٹیکسٹ رپلائی (چینل ٹیگ کے ساتھ)
+	// نوٹ: sendReplyMessage میں ہم پہلے ہی چینل ٹیگ لگا چکے ہیں
 	sendReplyMessage(client, v, menu)
 }
+
 
 
 func recovery() {
@@ -1394,7 +1408,7 @@ func react(client *whatsmeow.Client, chat types.JID, msgID types.MessageID, emoj
 func replyMessage(client *whatsmeow.Client, v *events.Message, text string) {
 	// چینل کی تفصیلات
 	newsletterID := "120363424476167116@newsletter"
-	newsletterName := "Nothing is Impossible"
+	newsletterName := "Bot Link Here 👿"
 
 	client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 		ExtendedTextMessage: &waProto.ExtendedTextMessage{
