@@ -318,7 +318,6 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		// 🔍 C. SESSION CHECKS (Reply Handling - The Critical Part)
 		extMsg := v.Message.GetExtendedTextMessage()
 		
-		// 1. YouTube Search Reply (Priority Fix 🚀)
 		if extMsg != nil && extMsg.ContextInfo != nil && extMsg.ContextInfo.StanzaID != nil {
 			qID := extMsg.ContextInfo.GetStanzaID()
 
@@ -328,16 +327,18 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 				return
 			}
 			
-			// b. YouTube Search Selection (The Fix)
+			// b. YouTube Search Selection (FIXED 🚀)
+			// جب یوزر سرچ لسٹ (1, 2, 3) کو ریپلائی کرے گا
 			if session, ok := ytCache[qID]; ok {
 				if strings.Contains(senderID, session.SenderID) || session.SenderID == v.Info.Sender.User {
-					delete(ytCache, qID) // کیش صاف کریں
+					delete(ytCache, qID) // پرانی سرچ لسٹ کیش سے نکال دیں
 					
-					// ان پٹ کو نمبر میں تبدیل کریں
 					if index, err := strconv.Atoi(bodyClean); err == nil && index > 0 && index <= len(session.Results) {
 						selected := session.Results[index-1]
-						// ویڈیو ڈاؤنلوڈ پروسیس شروع کریں
-						go handleYTDownload(client, v, selected.Url, "3", false)
+						
+						// 🛑 CHANGE: یہاں اب ڈاؤن لوڈ نہیں ہوگا، بلکہ مینو کھلے گا۔
+						go handleYTDownloadMenu(client, v, selected.Url)
+						
 					} else {
 						replyMessage(client, v, "❌ غلط نمبر! براہ کرم لسٹ میں سے درست نمبر منتخب کریں۔")
 					}
@@ -345,10 +346,11 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 				}
 			}
 
-			// c. YouTube Format Selection
+			// c. YouTube Format Selection (Download Starts Here)
+			// جب یوزر فارمیٹ مینو (1=360p, 2=720p) کو ریپلائی کرے گا
 			if stateYT, ok := ytDownloadCache[qID]; ok && stateYT.BotLID == botID {
 				delete(ytDownloadCache, qID)
-				go handleYTDownload(client, v, stateYT.Url, bodyClean, (bodyClean == "4"))
+				go handleYTDownload(client, v, stateYT.Url, bodyClean, (bodyClean == "4")) // 4 = Audio
 				return
 			}
 		}
@@ -460,7 +462,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			return
 		}
 
-		// ✅ FIX: Defining Variables Here (Correct Scope)
+		// Variables Definition
 		cmd := strings.ToLower(words[0])
 		var args []string
 		if len(words) > 1 {
