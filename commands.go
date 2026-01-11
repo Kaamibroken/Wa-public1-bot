@@ -33,10 +33,8 @@ var AuthorizedBots = map[string]bool{
 }
 // =========================================================
 
-// ⚡ نوٹ: یہاں سے وہ ڈپلیکیٹ ویری ایبلز (activeClients, clientsMutex وغیرہ) 
-// ہٹا دیئے گئے ہیں کیونکہ وہ اب صرف main.go میں ایک ہی بار ڈیفائن ہوں گے۔
-
 func handler(botClient *whatsmeow.Client, evt interface{}) {
+	// 🛡️ سیف گارڈ: کریش روکنے کے لیے
 	defer func() {
 		if r := recover(); r != nil {
 			bot := "unknown"
@@ -56,89 +54,94 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 	switch v := evt.(type) {
 
 	case *events.Message:
+		// پرانے میسجز کو فلٹر کریں (کمانڈز کے لیے)
 		isRecent := time.Since(v.Info.Timestamp) < 1*time.Minute
-
-		// 1. Resolve JID (Redis First)
-		realSender := ResolveRealJID(v.Info.Sender)
-		realChat := v.Info.Chat
-		if !v.Info.IsGroup {
-			realChat = ResolveRealJID(v.Info.Chat)
-		}
 
 		botID := "unknown"
 		if botClient.Store != nil && botClient.Store.ID != nil {
 			botID = getCleanID(botClient.Store.ID.User)
 		}
 
+		// ✅ Save Message to Mongo (Simple & Direct)
+		// یہاں اب کوئی LID ریزولور نہیں ہے، جو ڈیٹا آ رہا ہے وہی سیو ہو رہا ہے۔
 		go func() {
 			saveMessageToMongo(
 				botClient,
 				botID,
-				realChat.String(),
-				realSender,
+				v.Info.Chat.String(),
+				v.Info.Sender,
 				v.Message,
 				v.Info.IsFromMe,
 				uint64(v.Info.Timestamp.Unix()),
 			)
 		}()
 
+		// 🛑 Status Check
 		if v.Info.Chat.String() == "status@broadcast" {
 			return
 		}
 
+		// Process Commands
 		if isRecent {
 			go processMessage(botClient, v)
 		}
 
 	case *events.HistorySync:
-		// 🔥 HISTORY LEARNER (یہ لاگز میں کام کر رہا تھا)
+		// ہسٹری سنک (Simple Loop)
 		go func() {
-			if v.Data == nil || len(v.Data.Conversations) == 0 { return }
-			
+			if v.Data == nil || len(v.Data.Conversations) == 0 {
+				return
+			}
+
 			botID := "unknown"
 			if botClient.Store != nil && botClient.Store.ID != nil {
 				botID = getCleanID(botClient.Store.ID.User)
 			}
 
 			for _, conv := range v.Data.Conversations {
-				chatIDStr := ""
-				if conv.ID != nil { chatIDStr = *conv.ID }
-				if chatIDStr == "" { continue }
-
-				isGroup := strings.Contains(chatIDStr, "@g.us")
-				phoneUser := strings.Split(chatIDStr, "@")[0]
+				chatID := ""
+				if conv.ID != nil {
+					chatID = *conv.ID
+				}
+				if chatID == "" {
+					continue
+				}
 
 				for _, histMsg := range conv.Messages {
 					webMsg := histMsg.Message
-					if webMsg == nil { continue }
-
-					isFromMe := false
-					if webMsg.Key != nil && webMsg.Key.FromMe != nil { isFromMe = *webMsg.Key.FromMe }
-
-					senderJID := types.EmptyJID
-					if webMsg.Key != nil && webMsg.Key.Participant != nil {
-						senderJID, _ = types.ParseJID(*webMsg.Key.Participant)
-					} else if webMsg.Key != nil && webMsg.Key.RemoteJID != nil {
-						senderJID, _ = types.ParseJID(*webMsg.Key.RemoteJID)
+					if webMsg == nil || webMsg.Message == nil {
+						continue
 					}
 
-					// 🧠 LEARN FROM HISTORY
-					// لاگز میں ہمیں Conversation ID (Phone) اور Sender Key (LID) نظر آئی تھیں۔
-					// ہم انہیں یہاں جوڑ رہے ہیں۔
-					if !isGroup && !isFromMe && !senderJID.IsEmpty() {
-						if senderJID.Server == "lid" {
-							rdb.Set(context.Background(), "lid_map:"+senderJID.User, phoneUser, 0)
+					isFromMe := false
+					if webMsg.Key != nil && webMsg.Key.FromMe != nil {
+						isFromMe = *webMsg.Key.FromMe
+					}
+
+					// Sender نکالنا
+					senderJID := types.EmptyJID
+					if webMsg.Key != nil && webMsg.Key.Participant != nil {
+						if sj, err := types.ParseJID(*webMsg.Key.Participant); err == nil {
+							senderJID = sj
+						}
+					} else if webMsg.Key != nil && webMsg.Key.RemoteJID != nil {
+						if sj, err := types.ParseJID(*webMsg.Key.RemoteJID); err == nil {
+							senderJID = sj
 						}
 					}
 
-					resolvedSender := ResolveRealJID(senderJID)
+					// اگر میسج ہمارا اپنا ہے
 					if isFromMe && botClient.Store != nil && botClient.Store.ID != nil {
-						resolvedSender = *botClient.Store.ID
+						senderJID = *botClient.Store.ID
 					}
-					ts := uint64(0)
-					if webMsg.MessageTimestamp != nil { ts = *webMsg.MessageTimestamp }
 
-					saveMessageToMongo(botClient, botID, chatIDStr, resolvedSender, webMsg.Message, isFromMe, ts)
+					ts := uint64(0)
+					if webMsg.MessageTimestamp != nil {
+						ts = *webMsg.MessageTimestamp
+					}
+
+					// ✅ Save Call
+					saveMessageToMongo(botClient, botID, chatID, senderJID, webMsg.Message, isFromMe, ts)
 				}
 			}
 		}()
@@ -146,50 +149,9 @@ func handler(botClient *whatsmeow.Client, evt interface{}) {
 	case *events.Connected:
 		if botClient.Store != nil && botClient.Store.ID != nil {
 			fmt.Printf("🟢 [ONLINE] Bot %s connected!\n", botClient.Store.ID.User)
-			// Active Sync ہٹا دیا ہے کیونکہ وہ کریش کر رہا تھا اور رزلٹ نہیں دے رہا تھا
 		}
 	}
 }
-
-// =========================================================
-// 🧩 MASTER RESOLVER
-// =========================================================
-func ResolveRealJID(inputJID types.JID) types.JID {
-	if inputJID.Server == "s.whatsapp.net" { return inputJID }
-	if inputJID.Server != "lid" { return inputJID }
-
-	redisKey := "lid_map:" + inputJID.User
-	val, err := rdb.Get(context.Background(), redisKey).Result()
-	
-	if err == nil && val != "" {
-		return types.NewJID(val, "s.whatsapp.net")
-	}
-	return inputJID
-}
-
-// =========================================================
-// 🔍 CHECK COMMAND
-// =========================================================
-func handleCheckLID(client *whatsmeow.Client, v *events.Message, args []string) {
-	if len(args) < 1 {
-		replyMessage(client, v, "❌ پلیز LID ساتھ لکھیں۔")
-		return
-	}
-	raw := args[0]
-	raw = strings.Split(raw, "@")[0]
-	cleanLID := strings.Split(raw, ":")[0]
-
-	res := fmt.Sprintf("🔍 *LID CHECK:* `%s`\n\n", cleanLID)
-	val, err := rdb.Get(context.Background(), "lid_map:"+cleanLID).Result()
-
-	if err == nil && val != "" {
-		res += fmt.Sprintf("✅ *Real Phone:* `+%s`\n", val)
-	} else {
-		res += "❌ *Not found.* (History Sync سے سیکھنے کا انتظار کریں)"
-	}
-	replyMessage(client, v, res)
-}
-
 
 func isKnownCommand(text string) bool {
 	commands := []string{

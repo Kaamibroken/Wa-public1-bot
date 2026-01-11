@@ -540,56 +540,45 @@ type MediaItem struct {
 }
 // 🔥 HELPER: Save Message to Mongo (Fixed Context)
 func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJID types.JID, msg *waProto.Message, isFromMe bool, ts uint64) {
-	// 🛡️ SUPER SAFEGUARD
+	// Simple recover just in case
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("⚠️ Recovered from mongo save: %v\n", r)
+			// fmt.Printf("Mongo Save Error: %v\n", r)
 		}
 	}()
 
-	if chatHistoryCollection == nil || client == nil || msg == nil {
+	if chatHistoryCollection == nil {
 		return
 	}
 
-	// =========================================================
-	// 🚫 BLOCKING ZONE
-	// =========================================================
+	// 🚫 Ignore Channels/Newsletters
 	if strings.HasPrefix(chatID, "120") || strings.Contains(chatID, "@newsletter") {
-		return 
+		return
 	}
-	
-	// 2. Chat ID Cleanup
+
 	chatID = canonicalChatID(chatID)
-
-	// =========================================================
-	// 🛠️ SENDER PROCESSING
-	// =========================================================
 	senderStr := senderJID.String()
-	var msgType, content, senderName string
-	var quotedMsg, quotedSender string
-	var isSticker bool
 
-	timestamp := time.Unix(int64(ts), 0)
-	isGroup := strings.Contains(chatID, "@g.us")
-	isChannel := false 
-
-	// Name Lookup (Safe Check)
-	if client.Store != nil && client.Store.Contacts != nil {
-		if contact, err := client.Store.Contacts.GetContact(context.Background(), senderJID); err == nil && contact.Found {
-			senderName = contact.FullName
-			if senderName == "" { senderName = contact.PushName }
+	// 👤 Name Lookup (Simple)
+	senderName := strings.Split(senderStr, "@")[0]
+	if contact, err := client.Store.Contacts.GetContact(context.Background(), senderJID); err == nil && contact.Found {
+		senderName = contact.FullName
+		if senderName == "" {
+			senderName = contact.PushName
 		}
 	}
-	if senderName == "" {
-		senderName = strings.Split(senderStr, "@")[0] 
-	}
 
-	// =========================================================
-	// 🛠️ CONTENT PROCESSING (CRASH FIX HERE 🚨)
-	// =========================================================
-	var contextInfo *waProto.ContextInfo
+	// 📝 Content Variables
+	var msgType, content string
+	var quotedMsg, quotedSender string
+	var isSticker bool
 	
-	// Safe Extraction of ContextInfo
+	timestamp := time.Unix(int64(ts), 0)
+	isGroup := strings.Contains(chatID, "@g.us")
+	isChannel := false
+
+	// 🔍 Extract Context Info (For Replies/IDs)
+	var contextInfo *waProto.ContextInfo
 	if msg.ExtendedTextMessage != nil {
 		contextInfo = msg.ExtendedTextMessage.ContextInfo
 	} else if msg.ImageMessage != nil {
@@ -604,10 +593,8 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 		contextInfo = msg.DocumentMessage.ContextInfo
 	}
 
-	// Safe Extraction of Quoted Data
+	// Handle Quoted Messages
 	if contextInfo != nil && contextInfo.QuotedMessage != nil {
-		// ⚠️ یہ وہ جگہ ہے جہاں کریش ہو رہا تھا (Pointer Dereference)
-		
 		if contextInfo.Participant != nil {
 			quotedSender = canonicalChatID(*contextInfo.Participant)
 		} else if contextInfo.RemoteJID != nil {
@@ -616,13 +603,14 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 
 		if contextInfo.QuotedMessage.Conversation != nil {
 			quotedMsg = *contextInfo.QuotedMessage.Conversation
-		} else if contextInfo.QuotedMessage.ExtendedTextMessage != nil && contextInfo.QuotedMessage.ExtendedTextMessage.Text != nil {
-			quotedMsg = *contextInfo.QuotedMessage.ExtendedTextMessage.Text
+		} else if contextInfo.QuotedMessage.ExtendedTextMessage != nil {
+			quotedMsg = contextInfo.QuotedMessage.ExtendedTextMessage.GetText()
 		} else {
 			quotedMsg = "Replying…"
 		}
 	}
 
+	// Get Message ID
 	messageID := ""
 	if contextInfo != nil && contextInfo.StanzaID != nil {
 		messageID = *contextInfo.StanzaID
@@ -631,7 +619,7 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 		messageID = fmt.Sprintf("%s_%d", strings.Split(chatID, "@")[0], time.Now().UnixNano())
 	}
 
-	// Media Handling (Safe)
+	// 📂 Handle Media & Text
 	if txt := getText(msg); txt != "" {
 		msgType = "text"
 		content = txt
@@ -694,6 +682,7 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 		return
 	}
 
+	// 💾 Create & Insert Document
 	doc := ChatMessage{
 		BotID:        botID,
 		ChatID:       chatID,
@@ -716,9 +705,6 @@ func saveMessageToMongo(client *whatsmeow.Client, botID, chatID string, senderJI
 		// ignore
 	}
 }
-
-
-
 
 // helper: save media in separate collection
 func saveMediaDoc(botID, chatID, messageID, typ, mime string, loader func() (string, error)) {
