@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"path/filepath"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types/events"
@@ -39,17 +40,22 @@ func sendPremiumCard(client *whatsmeow.Client, v *events.Message, title, site, i
 	replyMessage(client, v, card)
 }
 
+// یہ سٹرکچر فنکشن سے باہر (اوپر) رکھیں
+type DownloadResult struct {
+	Path  string
+	Title string
+	Size  int64
+	Mime  string
+	Err   error
+}
 
-
-// 🚀 ہیوی ڈیوٹی میڈیا انجن (The Scientific Power)
-// 🚀 ہیوی ڈیوٹی میڈیا انجن (Updated with Splitter & Real Names)
-// 🚀 ہیوی ڈیوٹی میڈیا انجن (Updated: Global Jazz Drive + Background DL)
+// 🚀 ہیوی ڈیوٹی میڈیا انجن (Updated Function)
 func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode string, optionalFormat ...string) {
 	// 1️⃣ ٹائٹل نکالیں (فوری طور پر)
 	fmt.Println("🔍 Fetching Title...")
 	cmdTitle := exec.Command("yt-dlp", "--get-title", "--no-playlist", ytUrl)
 	titleOut, _ := cmdTitle.Output()
-	
+
 	cleanTitle := "Media_File"
 	if len(titleOut) > 0 {
 		cleanTitle = strings.TrimSpace(string(titleOut))
@@ -77,12 +83,7 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 	replyMessage(client, v, card)
 
 	// 3️⃣ بیک گراؤنڈ ڈاؤنلوڈ شروع کریں (چینل کے ذریعے)
-	type DownloadResult struct {
-		Path string
-		Size int64
-		Err  error
-	}
-	dlChan := make(chan DownloadResult, 1) // بفرڈ چینل تاکہ ڈیڈ لاک نہ ہو
+	dlChan := make(chan DownloadResult, 1) // بفرڈ چینل
 
 	go func() {
 		tempFileName := fmt.Sprintf("temp_%d", time.Now().UnixNano())
@@ -105,19 +106,26 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 
 		fmt.Printf("🛠️ [BG] Downloading: %s\n", cleanTitle)
 		cmd := exec.Command("yt-dlp", args...)
-		err := cmd.Run() // Run wait کرتا ہے جب تک مکمل نہ ہو
+		err := cmd.Run()
 
 		if err != nil {
 			dlChan <- DownloadResult{Err: err}
 			return
 		}
 
-		// نام تبدیل کریں
+		// نام تبدیل کریں اور سائز لیں
 		finalPath := cleanTitle + finalExt
 		os.Rename(tempFileName, finalPath)
 		info, _ := os.Stat(finalPath)
 
-		dlChan <- DownloadResult{Path: finalPath, Size: info.Size(), Err: nil}
+		// رزلٹ واپس بھیجیں
+		dlChan <- DownloadResult{
+			Path:  finalPath,
+			Title: cleanTitle,
+			Size:  info.Size(),
+			Mime:  mode,
+			Err:   nil,
+		}
 	}()
 
 	// 4️⃣ یوزر کے جواب کا انتظار کریں (60 سیکنڈ ٹائم آؤٹ)
@@ -130,11 +138,7 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 
 	if timedOut || strings.TrimSpace(userChoice) == "1" {
 		// --- OPTION 1: WHATSAPP (OR TIMEOUT) ---
-		if timedOut {
-			// اگر ٹائم آؤٹ ہوا تو مطلع کریں اور فائل بھیج دیں
-			// replyMessage(client, v, "⌛ Timeout! Sending here...") 
-			// (خاموشی سے بھیجنا بہتر ہے)
-		} else {
+		if !timedOut {
 			react(client, v.Info.Chat, v.Info.ID, "📤")
 		}
 
@@ -144,7 +148,7 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 			replyMessage(client, v, "❌ Download Failed.")
 			return
 		}
-		defer os.Remove(res.Path) // واٹس ایپ پر بھیجنے کے بعد ڈیلیٹ
+		defer os.Remove(res.Path) // صفائی
 
 		// فائل سائز چیک (1.5GB Split Logic)
 		const SplitLimit = 1500 * 1024 * 1024
@@ -156,7 +160,9 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 
 		// نارمل واٹس ایپ اپلوڈ
 		fileData, err := os.ReadFile(res.Path)
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 
 		var mType whatsmeow.MediaType
 		forceDoc := res.Size > 90*1024*1024 // 90MB Limit Logic
@@ -179,20 +185,33 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 		var finalMsg waProto.Message
 		if mType == whatsmeow.MediaDocument {
 			mime := "application/octet-stream"
-			if mode == "video" { mime = "video/mp4" }
-			if mode == "audio" { mime = "audio/mpeg" }
+			if mode == "video" {
+				mime = "video/mp4"
+			}
+			if mode == "audio" {
+				mime = "audio/mpeg"
+			}
 			finalMsg.DocumentMessage = &waProto.DocumentMessage{
-				URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
-				Mimetype: proto.String(mime), FileName: proto.String(filepath.Base(res.Path)),
-				FileLength: proto.Uint64(uint64(res.Size)), Caption: proto.String("✅ " + cleanTitle),
-				FileSHA256: up.FileSHA256, FileEncSHA256: up.FileEncSHA256,
+				URL:           proto.String(up.URL),
+				DirectPath:    proto.String(up.DirectPath),
+				MediaKey:      up.MediaKey,
+				Mimetype:      proto.String(mime),
+				FileName:      proto.String(filepath.Base(res.Path)),
+				FileLength:    proto.Uint64(uint64(res.Size)),
+				Caption:       proto.String("✅ " + cleanTitle),
+				FileSHA256:    up.FileSHA256,
+				FileEncSHA256: up.FileEncSHA256,
 			}
 		} else {
 			finalMsg.VideoMessage = &waProto.VideoMessage{
-				URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey,
-				Mimetype: proto.String("video/mp4"), Caption: proto.String("✅ " + cleanTitle),
-				FileLength: proto.Uint64(uint64(res.Size)),
-				FileSHA256: up.FileSHA256, FileEncSHA256: up.FileEncSHA256,
+				URL:           proto.String(up.URL),
+				DirectPath:    proto.String(up.DirectPath),
+				MediaKey:      up.MediaKey,
+				Mimetype:      proto.String("video/mp4"),
+				Caption:       proto.String("✅ " + cleanTitle),
+				FileLength:    proto.Uint64(uint64(res.Size)),
+				FileSHA256:    up.FileSHA256,
+				FileEncSHA256: up.FileEncSHA256,
 			}
 		}
 		client.SendMessage(context.Background(), v.Info.Chat, &finalMsg)
@@ -204,7 +223,6 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 		replyMessage(client, v, "📱 *Enter Jazz Number (03XXXXXXXXX):*\n_(You have 60s)_")
 
 		// بیک گراؤنڈ سے رزلٹ لے لیں (تاکہ پروسیس بلاک نہ ہو)
-		// ہم اسے 'res' میں محفوظ رکھیں گے جب تک نمبر/OTP نہ مل جائے
 		res := <-dlChan
 		if res.Err != nil {
 			replyMessage(client, v, "❌ Download Failed in background.")
@@ -214,25 +232,31 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 
 		// 1. Get Number
 		phone, ok := WaitForUserReply(senderID, 60*time.Second)
-		if !ok || phone == "" { replyMessage(client, v, "❌ Timeout."); return }
+		if !ok || phone == "" {
+			replyMessage(client, v, "❌ Timeout.")
+			return
+		}
 
 		// 2. Send OTP
 		userID := fmt.Sprintf("user_%d", time.Now().Unix())
 		replyMessage(client, v, "🔄 Sending OTP...")
-		
+
 		if jazzGenOTP(userID, phone) {
 			replyMessage(client, v, "🔑 *OTP Sent! Enter 4-digit code:*")
 			otp, ok := WaitForUserReply(senderID, 60*time.Second)
-			if !ok || otp == "" { replyMessage(client, v, "❌ Timeout."); return }
+			if !ok || otp == "" {
+				replyMessage(client, v, "❌ Timeout.")
+				return
+			}
 
 			// 3. Verify & Upload
 			replyMessage(client, v, "🔐 Verifying...")
 			if jazzVerifyOTP(userID, otp) {
 				replyMessage(client, v, "☁️ *Uploading to Jazz Drive...*\n_(This may take time depending on file size)_")
-				
+
 				link, err := jazzUploadFile(userID, res.Path)
 				if err == nil {
-					finalText := fmt.Sprintf("🎉 *Upload Complete!*\n\n📂 *File:* %s\n📦 *Size:* %.2f MB\n🔗 *Link:* %s", 
+					finalText := fmt.Sprintf("🎉 *Upload Complete!*\n\n📂 *File:* %s\n📦 *Size:* %.2f MB\n🔗 *Link:* %s",
 						res.Title, float64(res.Size)/(1024*1024), link)
 					replyMessage(client, v, finalText)
 				} else {
@@ -246,13 +270,37 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 		}
 
 	} else {
-		// غلط ان پٹ
+		// غلط ان پٹ (ڈیفالٹ واٹس ایپ پر بھیج دیں)
 		replyMessage(client, v, "❌ Invalid Option. Sending file directly...")
 		res := <-dlChan
 		if res.Err == nil {
 			defer os.Remove(res.Path)
-			// یہاں آپ دوبارہ اوپر والا WhatsApp Upload کوڈ کال کر سکتے ہیں 
-			// یا کوڈ ریپیٹ سے بچنے کے لیے ایک الگ فنکشن بنا لیں (تجویز کردہ)
+			// یہاں کوڈ ریپیٹ سے بچنے کے لیے اسی بلاک میں واٹس ایپ کوڈ دوبارہ لکھ سکتے ہیں
+			// یا صرف Download Failed کا میسج دے دیں اگر آپ کوڈ لمبا نہیں کرنا چاہتے۔
+			// لیکن یوزر ایکسپیرینس کے لیے فائل بھیجنا بہتر ہے۔
+			
+			// --- WhatsApp Upload Logic (Copied from Option 1 for Fallback) ---
+			fileData, _ := os.ReadFile(res.Path)
+			var mType whatsmeow.MediaType
+			if mode == "audio" || res.Size > 90*1024*1024 { mType = whatsmeow.MediaDocument } else { mType = whatsmeow.MediaVideo }
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+			defer cancel()
+			up, err := client.Upload(ctx, fileData, mType)
+			if err == nil {
+				var finalMsg waProto.Message
+				// ... (Simple construction for fallback)
+				if mType == whatsmeow.MediaDocument {
+					mime := "application/octet-stream"
+					finalMsg.DocumentMessage = &waProto.DocumentMessage{
+						URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey, Mimetype: proto.String(mime), FileName: proto.String(filepath.Base(res.Path)), FileLength: proto.Uint64(uint64(res.Size)), FileSHA256: up.FileSHA256, FileEncSHA256: up.FileEncSHA256,
+					}
+				} else {
+					finalMsg.VideoMessage = &waProto.VideoMessage{
+						URL: proto.String(up.URL), DirectPath: proto.String(up.DirectPath), MediaKey: up.MediaKey, Mimetype: proto.String("video/mp4"), FileLength: proto.Uint64(uint64(res.Size)), FileSHA256: up.FileSHA256, FileEncSHA256: up.FileEncSHA256,
+					}
+				}
+				client.SendMessage(context.Background(), v.Info.Chat, &finalMsg)
+			}
 		}
 	}
 }
