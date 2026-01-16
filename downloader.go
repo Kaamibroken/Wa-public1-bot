@@ -52,8 +52,13 @@ type DLResult struct {
 
 // 🚀 ہیوی ڈیوٹی میڈیا انجن
 // 🚀 ہیوی ڈیوٹی میڈیا انجن (Parallel Processing: Download + User Interaction)
+// 🚀 ہیوی ڈیوٹی میڈیا انجن (Updated: Download First -> Then Menu)
 func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode string, optionalFormat ...string) {
-	// 1️⃣ ٹائٹل نکالیں (فوری طور پر)
+	// 1️⃣ صارف کو بتائیں کہ ڈاؤنلوڈ شروع ہو گیا ہے
+	react(client, v.Info.Chat, v.Info.ID, "⬇️")
+	statusMsgID := replyMessage(client, v, "⏳ *Downloading Media...* Please wait.")
+
+	// 2️⃣ ٹائٹل اور فائل نیم سیٹ اپ
 	fmt.Println("🔍 Fetching Title...")
 	cmdTitle := exec.Command("yt-dlp", "--get-title", "--no-playlist", ytUrl)
 	titleOut, _ := cmdTitle.Output()
@@ -66,113 +71,104 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 		cleanTitle = strings.ReplaceAll(cleanTitle, "\"", "'")
 	}
 
-	// 2️⃣ مینو کارڈ **فوراً** بھیجیں (تاکہ یوزر کو انتظار نہ کرنا پڑے)
+	tempFileName := fmt.Sprintf("temp_%d", time.Now().UnixNano())
+	formatArg := "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+	if len(optionalFormat) > 0 && optionalFormat[0] != "" {
+		formatArg = optionalFormat[0]
+	}
+
+	var args []string
+	finalExt := ".mp4"
+
+	if mode == "audio" {
+		tempFileName += ".mp3"
+		finalExt = ".mp3"
+		args = []string{"--no-playlist", "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", tempFileName, ytUrl}
+	} else {
+		tempFileName += ".mp4"
+		args = []string{"--no-playlist", "-f", formatArg, "--merge-output-format", "mp4", "-o", tempFileName, ytUrl}
+	}
+
+	// 3️⃣ ڈاؤنلوڈ شروع (Blocking Process)
+	fmt.Printf("🛠️ [CMD] Downloading: %s\n", cleanTitle)
+	cmd := exec.Command("yt-dlp", args...)
+	err := cmd.Run()
+
+	if err != nil {
+		fmt.Println("❌ Download Error:", err)
+		client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
+			ExtendedTextMessage: &waProto.ExtendedTextMessage{
+				Text:      proto.String("❌ Download Failed!"),
+				ContextInfo: &waProto.ContextInfo{StanzaID: proto.String(statusMsgID)}, // پرانے میسج کا حوالہ
+			},
+		})
+		return
+	}
+
+	// نام ٹھیک کریں اور سائز لیں
+	finalPath := cleanTitle + finalExt
+	os.Rename(tempFileName, finalPath)
+	info, _ := os.Stat(finalPath)
+	fileSize := info.Size()
+	
+	// صفائی کا انتظام (ڈیفر میں نہیں، کیونکہ ہمیں فائل تب تک چاہیے جب تک پروسیس مکمل نہ ہو)
+	// ہم مینول ریموو کریں گے۔
+
+	// 4️⃣ فائل تیار ہے! اب مینیو دکھائیں
+	fileSizeMB := float64(fileSize) / (1024 * 1024)
+	
 	card := fmt.Sprintf(`╔══════════════════════╗
-║ ✨ %s DOWNLOADER
+║ ✅ DOWNLOAD COMPLETE
 ╠══════════════════════╣
-║ 📝 Title: %s
-║ 🌐 Source: External Link
+║ 📝 File: %s
+║ 📦 Size: %.2f MB
 ╠══════════════════════╣
-║ ⏳ Status: Downloading...
+║ ⚡ Ready to Send!
 ╚══════════════════════╝
 
-*Choose Action:*
-1️⃣ Send to WhatsApp (Default)
+*Choose Destination:*
+1️⃣ Send Here (WhatsApp)
 2️⃣ Upload to Jazz Drive ☁️
 
-_(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
+_(You have 5 mins - Default: WhatsApp)_`, cleanTitle, fileSizeMB)
 
 	replyMessage(client, v, card)
 
-	// 3️⃣ بیک گراؤنڈ ڈاؤنلوڈ شروع کریں (چینل کے ذریعے)
-	// یہ الگ تھریڈ میں چلے گا، مین کوڈ رکے گا نہیں
-	dlChan := make(chan DLResult, 1)
-
-	go func() {
-		tempFileName := fmt.Sprintf("temp_%d", time.Now().UnixNano())
-		formatArg := "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-		if len(optionalFormat) > 0 && optionalFormat[0] != "" {
-			formatArg = optionalFormat[0]
-		}
-
-		var args []string
-		finalExt := ".mp4"
-
-		if mode == "audio" {
-			tempFileName += ".mp3"
-			finalExt = ".mp3"
-			args = []string{"--no-playlist", "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", tempFileName, ytUrl}
-		} else {
-			tempFileName += ".mp4"
-			args = []string{"--no-playlist", "-f", formatArg, "--merge-output-format", "mp4", "-o", tempFileName, ytUrl}
-		}
-
-		fmt.Printf("🛠️ [BG] Downloading Started: %s\n", cleanTitle)
-		cmd := exec.Command("yt-dlp", args...)
-		err := cmd.Run() // یہ ڈاؤنلوڈ ہونے تک رکا رہے گا (Backround میں)
-
-		if err != nil {
-			dlChan <- DLResult{Err: err}
-			return
-		}
-
-		// نام تبدیل کریں اور سائز لیں
-		finalPath := cleanTitle + finalExt
-		os.Rename(tempFileName, finalPath)
-		info, _ := os.Stat(finalPath)
-
-		// رزلٹ واپس بھیجیں
-		dlChan <- DLResult{
-			Path:  finalPath,
-			Title: cleanTitle,
-			Size:  info.Size(),
-			Mime:  mode,
-			Err:   nil,
-		}
-		fmt.Printf("✅ [BG] Download Finished: %s\n", cleanTitle)
-	}()
-
-	// 4️⃣ یوزر کے جواب کا انتظار کریں (جبکہ ڈاؤنلوڈ پیچھے چل رہا ہے)
+	// 5️⃣ یوزر کے جواب کا انتظار (5 منٹ ٹائم آؤٹ)
 	senderID := v.Info.Sender.ToNonAD().String()
-	userChoice, success := WaitForUserReply(senderID, 60*time.Second)
+	userChoice, success := WaitForUserReply(senderID, 300*time.Second) // 300s = 5 Minutes
 
 	// ====================================================
 	// 🚦 DECISION LOGIC
 	// ====================================================
 
+	// اگر ٹائم آؤٹ ہوا (!success) یا یوزر نے "1" دبایا
 	if !success || strings.TrimSpace(userChoice) == "1" {
-		// --- OPTION 1: WHATSAPP ---
-		if success {
-			react(client, v.Info.Chat, v.Info.ID, "📤")
-			replyMessage(client, v, "📥 Waiting for download to finish...")
-		} else {
-			// Timeout: خاموشی سے بھیج دیں
+		if !success {
+			// Timeout Message (Optional)
+			// replyMessage(client, v, "⌛ Timeout! Sending to WhatsApp...")
 		}
+		react(client, v.Info.Chat, v.Info.ID, "📤")
 
-		// 🛑 یہاں مین تھریڈ رکے گا جب تک ڈاؤنلوڈ مکمل نہ ہو جائے
-		res := <-dlChan
+		// فائل پہلے سے موجود ہے، بس بھیج دیں
+		dlRes := DLResult{Path: finalPath, Title: cleanTitle, Size: fileSize, Mime: mode}
+		uploadToWhatsApp(client, v, dlRes, mode)
 		
-		if res.Err != nil {
-			replyMessage(client, v, "❌ Download Failed.")
-			return
-		}
-		defer os.Remove(res.Path)
-
-		// ہیلپر فنکشن کال کریں
-		uploadToWhatsApp(client, v, res, mode)
+		// بھیجنے کے بعد ڈیلیٹ
+		os.Remove(finalPath)
 
 	} else if strings.TrimSpace(userChoice) == "2" {
 		// --- OPTION 2: JAZZ DRIVE ---
 		react(client, v.Info.Chat, v.Info.ID, "☁️")
-		replyMessage(client, v, "📱 *Enter Jazz Number (03XXXXXXXXX):*\n_(You have 60s)_")
+		replyMessage(client, v, "📱 *Enter Jazz Number (03XXXXXXXXX):*\n_(You have 2 mins)_")
 
 		// 1. Get Number
-		phone, ok := WaitForUserReply(senderID, 60*time.Second)
+		phone, ok := WaitForUserReply(senderID, 120*time.Second)
 		if !ok || phone == "" {
-			replyMessage(client, v, "❌ Timeout.")
-			// اگر یوزر بھاگ گیا، تو بھی ڈاؤنلوڈ کی صفائی کرنی پڑے گی
-			res := <-dlChan
-			if res.Err == nil { os.Remove(res.Path) }
+			replyMessage(client, v, "❌ Timeout. Sending to WhatsApp instead.")
+			dlRes := DLResult{Path: finalPath, Title: cleanTitle, Size: fileSize, Mime: mode}
+			uploadToWhatsApp(client, v, dlRes, mode)
+			os.Remove(finalPath)
 			return
 		}
 
@@ -182,58 +178,47 @@ _(Auto-send in 1 min if no reply)_`, strings.ToUpper(mode), cleanTitle)
 
 		if jazzGenOTP(userID, phone) {
 			replyMessage(client, v, "🔑 *OTP Sent! Enter 4-digit code:*")
-			otp, ok := WaitForUserReply(senderID, 60*time.Second)
+			otp, ok := WaitForUserReply(senderID, 120*time.Second)
 			if !ok || otp == "" {
-				replyMessage(client, v, "❌ Timeout.")
-				res := <-dlChan
-				if res.Err == nil { os.Remove(res.Path) }
+				replyMessage(client, v, "❌ Timeout. Sending to WhatsApp.")
+				dlRes := DLResult{Path: finalPath, Title: cleanTitle, Size: fileSize, Mime: mode}
+				uploadToWhatsApp(client, v, dlRes, mode)
+				os.Remove(finalPath)
 				return
 			}
 
-			// 3. Verify Login
-			replyMessage(client, v, "🔐 Verifying Login...")
+			// 3. Verify & Upload
+			replyMessage(client, v, "🔐 Verifying...")
 			if jazzVerifyOTP(userID, otp) {
-				replyMessage(client, v, "✅ Login Success! Checking file status...")
+				replyMessage(client, v, "☁️ *Uploading to Jazz Drive...*\n_(This may take time)_")
 
-				// 🛑 اب یہاں ڈاؤنلوڈ کا انتظار کریں (ہو سکتا ہے لاگ ان کرتے کرتے فائل تیار ہو گئی ہو)
-				res := <-dlChan
-				
-				if res.Err != nil {
-					replyMessage(client, v, "❌ Download Failed in background.")
-					return
-				}
-				defer os.Remove(res.Path)
-
-				// 4. Upload to Jazz Drive
-				replyMessage(client, v, "☁️ *Uploading to Jazz Drive...*\n_(Please wait)_")
-				
-				link, err := jazzUploadFile(userID, res.Path)
+				// یہاں سیشن بالکل تازہ ہے، اور فائل بھی ریڈی ہے۔ فیل ہونے کا چانس 0٪
+				link, err := jazzUploadFile(userID, finalPath)
 				if err == nil {
 					finalText := fmt.Sprintf("🎉 *Upload Complete!*\n\n📂 *File:* %s\n📦 *Size:* %.2f MB\n🔗 *Link:* %s",
-						res.Title, float64(res.Size)/(1024*1024), link)
+						cleanTitle, fileSizeMB, link)
 					replyMessage(client, v, finalText)
 				} else {
 					replyMessage(client, v, "❌ Upload Failed: "+err.Error())
+					// اگر فیل ہو جائے تو بیک اپ کے طور پر واٹس ایپ پر بھیج دیں؟ (آپ کی مرضی)
+					// uploadToWhatsApp(client, v, DLResult{Path: finalPath...}, mode)
 				}
 			} else {
 				replyMessage(client, v, "❌ Invalid OTP.")
-				res := <-dlChan
-				if res.Err == nil { os.Remove(res.Path) }
 			}
 		} else {
 			replyMessage(client, v, "❌ Failed to send OTP. Check number.")
-			res := <-dlChan
-			if res.Err == nil { os.Remove(res.Path) }
 		}
+		
+		// کام ختم، فائل اڑا دیں
+		os.Remove(finalPath)
 
 	} else {
-		// غلط ان پٹ
-		replyMessage(client, v, "❌ Invalid Option. Sending file directly...")
-		res := <-dlChan
-		if res.Err == nil {
-			defer os.Remove(res.Path)
-			uploadToWhatsApp(client, v, res, mode)
-		}
+		// غلط ان پٹ -> ڈیفالٹ ایکشن (واٹس ایپ)
+		replyMessage(client, v, "❌ Invalid Option. Sending file here...")
+		dlRes := DLResult{Path: finalPath, Title: cleanTitle, Size: fileSize, Mime: mode}
+		uploadToWhatsApp(client, v, dlRes, mode)
+		os.Remove(finalPath)
 	}
 }
 // ---------------------------------------------------------
