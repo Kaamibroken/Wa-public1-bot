@@ -720,53 +720,49 @@ func handleGithub(client *whatsmeow.Client, v *events.Message, urlStr string) {
 // 📺 یوٹیوب سرچ اور مینو (YTS)
 func handleYTS(client *whatsmeow.Client, v *events.Message, query string) {
 	if query == "" { return }
-	
-	// 1. ری ایکشن (تاکہ پتا چلے کمانڈ موصول ہو گئی)
 	react(client, v.Info.Chat, v.Info.ID, "🔍")
 	fmt.Printf("🔍 [YTS START] Query: %s\n", query)
 
-	// بوٹ کی کلین آئی ڈی لیں
 	myID := getCleanID(client.Store.ID.User)
 
-	// 🔥 FIX: 15 سیکنڈ کا ٹائم آؤٹ (تاکہ بوٹ ہینگ نہ ہو)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// 🔥 FIX: --force-ipv4 (کنکشن کو تیز بنانے کے لیے)
+	// 🔥 FINAL FIX: --flat-playlist (This is the magic flag)
+	// یہ ویڈیو کو لوڈ نہیں کرتا، صرف ٹائٹل اور آئی ڈی اٹھاتا ہے جو کہ بہت تیز اور بلاک پروف ہے۔
 	cmd := exec.CommandContext(ctx, "yt-dlp", 
-		"ytsearch5:"+query, 
-		"--print", "%(title)s|||%(id)s", 
-		"--no-playlist",
+		"ytsearch5:"+query,
+		"--flat-playlist",  // <--- یہ سب سے اہم ہے
+		"--print", "%(title)s|||%(id)s",
 		"--no-warnings",
-		"--force-ipv4", // نیٹ ورک ہینگ ہونے سے بچاتا ہے
+		"--force-ipv4",
+		"--extractor-args", "youtube:player_client=android", // Android Bypass
 	)
 
-	// ایرر پکڑنے کے لیے
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	fmt.Println("⏳ [YTS] Executing yt-dlp command...")
+	fmt.Println("⏳ [YTS] Executing yt-dlp (Flat Playlist Mode)...")
 	out, err := cmd.Output()
-	
-	// 3. اگر ٹائم آؤٹ ہو یا ایرر آئے
+
 	if ctx.Err() == context.DeadlineExceeded {
-		fmt.Println("❌ [YTS TIMEOUT] Command took too long (>15s).")
-		replyMessage(client, v, "⚠️ *Search Timeout!* Try again later.")
+		replyMessage(client, v, "⚠️ Search Timeout!")
 		return
 	}
 
 	if err != nil {
 		fmt.Printf("❌ [YTS FAIL] Error: %v\n⚠️ [STDERR]: %s\n", err, stderr.String())
-		replyMessage(client, v, "❌ Search Failed due to server error.")
+		replyMessage(client, v, "❌ Search Error.")
 		return
 	}
 
 	outputStr := strings.TrimSpace(string(out))
 	lines := strings.Split(outputStr, "\n")
 	
+	// خالی رزلٹ چیک
 	if len(lines) == 0 || outputStr == "" { 
-		fmt.Println("⚠️ [YTS] No results found.")
-		replyMessage(client, v, "❌ No results found.")
+		fmt.Println("⚠️ [YTS] No results found (Empty Output).")
+		replyMessage(client, v, "❌ No results found. Try a different keyword.")
 		return 
 	}
 
@@ -788,8 +784,7 @@ func handleYTS(client *whatsmeow.Client, v *events.Message, query string) {
 	}
 
 	if count == 0 {
-		fmt.Println("⚠️ [YTS] Parsing failed.")
-		replyMessage(client, v, "❌ Error parsing results.")
+		replyMessage(client, v, "❌ Could not parse results.")
 		return
 	}
 
@@ -803,10 +798,10 @@ func handleYTS(client *whatsmeow.Client, v *events.Message, query string) {
 		fmt.Printf("✅ [YTS SENT] Menu sent with %d results.\n", count)
 		ytCache[resp.ID] = YTSession{Results: results, SenderID: v.Info.Sender.User, BotLID: myID}
 		go func() { time.Sleep(2 * time.Minute); delete(ytCache, resp.ID) }()
-	} else {
-		fmt.Printf("❌ [YTS SEND ERR] %v\n", err)
 	}
 }
+
+
 
 func handleYTDownloadMenu(client *whatsmeow.Client, v *events.Message, ytUrl string) {
 	myID := getCleanID(client.Store.ID.User)
