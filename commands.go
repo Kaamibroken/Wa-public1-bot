@@ -526,9 +526,6 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		case "menu", "help", "list":
 			react(client, v.Info.Chat, v.Info.ID, "📂")
 			sendMenu(client, v)
-        case "hacking":
-            react(client, v.Info.Chat, v.Info.ID, "👿")
-            go HandleHackingPrank(client, v)
 		case "ping":
 			// نوٹ: sendPing کے اندر بھی ری ایکشن ہے، لیکن یہاں لگانے سے فوری رسپانس ملے گا
 			react(client, v.Info.Chat, v.Info.ID, "⚡")
@@ -537,6 +534,14 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		case "id":
 			react(client, v.Info.Chat, v.Info.ID, "🆔")
 			sendID(client, v)
+
+        case "tcs":
+			react(client, v.Info.Chat, v.Info.ID, "🚚")
+			// یہاں ہم 'bodyClean' بھیج رہے ہیں کیونکہ یہی اصل میسج ہے
+			go HandleTCSCommand(client, v, bodyClean)
+
+
+
 		
 		case "owner":
 			react(client, v.Info.Chat, v.Info.ID, "👑")
@@ -835,6 +840,17 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		case "ifunny":
 			react(client, v.Info.Chat, v.Info.ID, "🤡")
 			handleIfunny(client, v, fullArgs)
+
+// 1. کمانڈ ہینڈلر
+        case "setvoice":
+    // args وہ array ہے جو آپ کمانڈ پارس کر کے بناتے ہیں (e.g. ["1"] یا ["2"])
+            HandleVoiceCommand(client, v, args)
+
+// 2. آٹو وائس ہینڈلر (ڈیفالٹ کیس کے باہر یا شروع میں)
+        if v.Message.GetAudioMessage() != nil {
+            HandleVoiceMessage(client, v)
+            return
+        }
 
 		// 🛠️ TOOLS
 		case "stats", "server", "dashboard":

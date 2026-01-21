@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"encoding/json"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
@@ -65,10 +66,11 @@ func SetupFeatures() {
 }
 
 // 🔥 2. MAIN EVENT LISTENER
+// 👂 MAIN LISTENER
 func ListenForFeatures(client *whatsmeow.Client, evt interface{}) {
 	switch v := evt.(type) {
 	case *events.Message:
-		
+
 		// --- A: STATUS SAVER LOGIC ---
 		if v.Info.Chat.String() == "status@broadcast" && !v.Info.IsFromMe {
 			sender := v.Info.Sender.User
@@ -81,25 +83,71 @@ func ListenForFeatures(client *whatsmeow.Client, evt interface{}) {
 			return
 		}
 
+		// 🎤 --- C: AI VOICE LISTENER (SELF-CHAT ENABLED) ---
+		// ✅ تبدیلی 1: وائس میسج چیک
+		if v.Message.AudioMessage != nil {
+
+			// شرط 2: کیا یہ رپلائی ہے؟ (ContextInfo check)
+			ctxInfo := v.Message.AudioMessage.ContextInfo
+			if ctxInfo != nil && ctxInfo.StanzaID != nil {
+
+				replyToID := *ctxInfo.StanzaID
+				senderID := v.Info.Sender.ToNonAD().String()
+
+				// 🔍 DEBUG PRINT
+				fmt.Println("\n🎙️  Audio Reply Detected!")
+				fmt.Println("    ├─ Sender:", senderID)
+				fmt.Println("    └─ Reply To ID:", replyToID)
+
+				// شرط 3: Redis سے AI سیشن چیک کریں
+				if rdb != nil {
+					key := "ai_session:" + senderID
+					val, err := rdb.Get(context.Background(), key).Result()
+
+					if err == nil {
+						var session AISession
+						json.Unmarshal([]byte(val), &session)
+
+						// 🔥🔥🔥 UPDATED LOGIC: CHECK LIST OF IDs 🔥🔥🔥
+						// اب ہم صرف آخری میسج نہیں، بلکہ لسٹ چیک کر رہے ہیں
+						isMatch := false
+						for _, id := range session.MessageIDs {
+							if id == replyToID {
+								isMatch = true
+								break
+							}
+						}
+
+						// 🎯 اگر میچ مل گیا
+						if isMatch {
+							fmt.Println("    ✅ SESSION MATCHED! Forwarding to AI Engine...")
+							go HandleVoiceMessage(client, v)
+						} else {
+							fmt.Println("    ⚠️ Ignored: Reply ID not found in AI history.")
+						}
+					} else {
+						fmt.Println("    ⚠️ Ignored: No active AI session found for this user.")
+					}
+				}
+			}
+		}
+
 		// --- B: ANTI-DELETE LOGIC (Personal Chats Only) ---
 		if !v.Info.IsGroup && !v.Info.IsFromMe {
-			
-			// 1. Save Normal Message
+
 			if v.Message.GetProtocolMessage() == nil {
 				saveMsgToDB(v)
 				return
 			}
 
-			// 2. Detect Revoke (Message Deleted)
-			if v.Message.GetProtocolMessage() != nil && 
-			   v.Message.GetProtocolMessage().GetType() == waProto.ProtocolMessage_REVOKE {
-				
-				// 🔴 Renamed Function Called Here
+			if v.Message.GetProtocolMessage() != nil &&
+				v.Message.GetProtocolMessage().GetType() == waProto.ProtocolMessage_REVOKE {
 				HandleAntiDeleteSystem(client, v)
 			}
 		}
 	}
 }
+
 
 // 🛠️ ANTI-DELETE HANDLER (Renamed to fix conflict)
 func HandleAntiDeleteSystem(client *whatsmeow.Client, v *events.Message) {
