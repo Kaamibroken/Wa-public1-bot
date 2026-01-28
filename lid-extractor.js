@@ -13,18 +13,18 @@ async function extractLidMaster() {
 
     try {
         await client.connect();
-        console.log("✅ [DATABASE] پوسٹ گریس کے ساتھ کنکشن قائم ہو گیا ہے۔");
+        console.log("✅ [DATABASE] Connected");
 
         // براہ راست ڈیوائس ٹیبل سے JID اور LID اٹھائیں
         const query = 'SELECT jid, lid FROM whatsmeow_device;';
         const res = await client.query(query);
 
         if (res.rows.length === 0) {
-            console.log("⚠️ [EMPTY] کوئی سیشن نہیں ملا۔ بوٹ پیئر کریں!");
+            console.log("⚠️ [EMPTY] No Session Found");
             process.exit(0);
         }
 
-        console.log(`📊 [FOUND] کل ${res.rows.length} سیشنز کا ڈیٹا ملا ہے۔\n`);
+        console.log(`📊 [FOUND] All ${res.rows.length} Session Data Received\n`);
         
         let botData = {};
 
@@ -37,7 +37,7 @@ async function extractLidMaster() {
                 console.log(`  ╭────────────── [ BOT #${index + 1} ] ──────────────`);
                 console.log(`  │ 📱 فون نمبر : ${purePhone}`);
                 console.log(`  │ 🆔 اصل LID  : ${pureLid}`);
-                console.log(`  │ ✨ اسٹیٹس   : کامیابی سے محفوظ!`);
+                console.log(`  │ ✨ status   : Successfully Saved`);
                 console.log(`  ╰───────────────────────────────────────────\n`);
 
                 // پرانا اسٹرکچر جو گو (Go) بوٹ کو چاہیے
@@ -57,13 +57,13 @@ async function extractLidMaster() {
         };
 
         fs.writeFileSync('./lid_data.json', JSON.stringify(finalJson, null, 2));
-        console.log("💾 [SUCCESS] سارا ڈیٹا 'lid_data.json' میں پش کر دیا گیا ہے۔");
+        console.log("💾 [SUCCESS] All Data Saved To 'lid_data.json' ");
 
     } catch (err) {
         console.error("❌ [CRITICAL ERROR]:", err.message);
     } finally {
         await client.end();
-        console.log("\n🏁 [FINISHED] آپریشن مکمل ہوا۔");
+        console.log("\n🏁 [FINISHED] Operation Successful");
         process.exit(0);
     }
 }

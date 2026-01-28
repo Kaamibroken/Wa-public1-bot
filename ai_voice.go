@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,9 +22,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+
+
 // ⚙️ SETTINGS
 const PY_SERVER = "http://localhost:5000"
-const REMOTE_VOICE_URL = "https://real-voice-2-production.up.railway.app/speak"
+const REMOTE_VOICE_URL = "https://voice-real-production.up.railway.app/speak"
 
 func KeepServerAlive() {
 	ticker := time.NewTicker(2 * time.Minute)
@@ -166,7 +169,6 @@ func requestVoiceServer(url string, text string, speakerFile string) ([]byte, er
 
 func GetGeminiVoiceResponseWithHistory(query string, senderID string) (string, string) {
 	ctx := context.Background()
-	
 	history := GetAIHistory(senderID)
 
 	var validKeys []string
@@ -179,34 +181,76 @@ func GetGeminiVoiceResponseWithHistory(query string, senderID string) (string, s
 		}
 	}
 
+	// 🔥🔥🔥 ULTIMATE STRICT PROMPT FOR HINDI SCRIPT 🔥🔥🔥
+	systemPrompt := fmt.Sprintf(`System: You are an AI that can ONLY write in Devanagari script (Hindi).
+	
+	🔴 CRITICAL RULE: YOU ARE FORBIDDEN FROM USING URDU SCRIPT (Nastaliq).
+	🔴 CRITICAL RULE: Even if the user speaks Urdu, you MUST reply using HINDI CHARACTERS.
+
+	Example 1:
+	User: "Kya hal hai?"
+	You: "मैं ठीक हूँ, तुम सुनाओ?"
+
+	Example 2:
+	User: "Kuch suna do yaar"
+	You: "अरे यार, आज मौसम बहुत प्यारा है।"
+
+	Example 3 (Complex):
+	User: "Maza aa gaya"
+	You: "हाँ यार, सच में मज़ा आ गया।"
+
+	CONTEXT:
+	- Tone: Friendly, casual, caring ('Yaar', 'Jaan').
+	- Length: Keep it short (1-2 sentences) unless asked for a story/poem.
+	- Language: Urdu/Hindi spoken language, BUT WRITTEN IN DEVANAGARI ONLY.
+
+	Chat History: %s
+	User Voice Message: "%s"`, history, query)
+
+	// ... (Rest of the code remains same) ...
+	
+	// 1. Try Custom API
+	customURL := os.Getenv("CUSTOM_API_URL")
+	if customURL == "" {
+		customURL = "https://gemini-api-production-b665.up.railway.app/chat"
+	}
+
+	encodedPrompt := url.QueryEscape(systemPrompt)
+	apiReqURL := fmt.Sprintf("%s?message=%s", customURL, encodedPrompt)
+	
+	apiClient := &http.Client{Timeout: 90 * time.Second}
+	resp, err := apiClient.Get(apiReqURL)
+
+	if err == nil && resp.StatusCode == 200 {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var apiResp struct {
+			Response string `json:"response"`
+			Status   string `json:"status"`
+		}
+		if json.Unmarshal(body, &apiResp) == nil && apiResp.Status == "success" {
+			fmt.Println("✅ Voice Generated via Custom API (Hindi Script)!")
+			return apiResp.Response, ""
+		}
+	} else {
+		fmt.Printf("⚠️ Custom API Failed (%v). Switching to Backup...\n", err)
+	}
+
+	// 2. Try Gemini Keys
 	for i, key := range validKeys {
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: key})
-		if err != nil {
-			continue
-		}
-
-		// 🔥🔥🔥 VOICE AI PROMPT (Adaptive Length) 🔥🔥🔥
-		systemPrompt := fmt.Sprintf(`System: You are a deeply caring friend.
-		🔴 VOICE MODE RULES:
-		1. **Script:** ALWAYS HINDI (Devanagari) for correct pronunciation.
-		2. **Language:** Pure Urdu spoken style.
-		3. **Tone:** Casual, loving ('Yaar', 'Jaan').
-		4. **ADAPTIVE LENGTH:**
-		   - **Casual Chat:** Keep it SHORT (1-2 sentences). e.g., "Main theek hun, tum sunao?"
-		   - **Special Request:** If user asks for a Poem (Sher), Story, or Explanation, you CAN be longer (3-4 sentences max).
-		   - Do not preach unless asked.
+		if err != nil { continue }
 		
-		Chat History: %s
-		User Voice: "%s"`, history, query)
-
+		// Use flash model for speed
 		resp, err := client.Models.GenerateContent(ctx, "gemini-2.5-flash", genai.Text(systemPrompt), nil)
 		if err != nil {
-			fmt.Printf("❌ Key #%d Failed. Switching...\n", i+1)
+			fmt.Printf("❌ Key #%d Failed.\n", i+1)
 			continue
 		}
 		return resp.Text(), ""
 	}
-	return "نیٹ ورک کا مسئلہ ہے۔", ""
+
+	return "नेटवर्क का मसला है।", ""
 }
 
 func TranscribeAudio(audioData []byte) (string, error) {

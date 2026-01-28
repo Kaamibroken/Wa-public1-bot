@@ -194,29 +194,47 @@ func canExecute(client *whatsmeow.Client, v *events.Message, cmd string) bool {
 
 // ⚡ MAIN MESSAGE PROCESSOR (FULL & OPTIMIZED)
 func processMessage(client *whatsmeow.Client, v *events.Message) {
-	// 🛡️ 1. Panic Recovery (System Safeguard)
+	// 🛡️ 1. Panic Recovery
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Printf("⚠️ Critical Panic in ProcessMessage: %v\n", r)
 		}
 	}()
 
-	// ⚡ 2. Timestamp Check (Relaxed to 60s)
+	// ⚡ 2. Timestamp Check
 	if time.Since(v.Info.Timestamp) > 60*time.Second {
 		return
 	}
 
-	// ⚡ 3. Basic Text Extraction
+	// ⚡ 3. Text & Type Extraction
 	bodyRaw := getText(v.Message)
-	if bodyRaw == "" {
+	isAudio := v.Message.GetAudioMessage() != nil // 🔥 Check if it's Audio
+
+	// 🛑 CRITICAL FIX: اگر ٹیکسٹ خالی ہے لیکن آڈیو ہے، تو اسے مت روکو!
+	if bodyRaw == "" && !isAudio {
 		if v.Info.Chat.String() != "status@broadcast" {
-			return
+			return // صرف تب روکو جب نہ ٹیکسٹ ہو اور نہ آڈیو
 		}
 	}
 	bodyClean := strings.TrimSpace(bodyRaw)
 
 	// =========================================================
-	// 🛡️ 0. IMMEDIATE ANTI-BUG PROTECTION (Private Chats Only)
+	// 🔥 AI & HISTORY LOGIC
+	// =========================================================
+
+	rawBotID := client.Store.ID.User
+	botID := strings.TrimSuffix(strings.Split(rawBotID, ":")[0], "@s.whatsapp.net")
+
+	// 🔥 1. Record History (Text & Voice)
+	RecordChatHistory(client, v, botID)
+
+	// 🔥 2. AUTO AI REPLY CHECK (Priority High)
+	if CheckAndHandleAutoReply(client, v) {
+		return
+	}
+
+	// =========================================================
+	// 🛡️ 4. IMMEDIATE ANTI-BUG PROTECTION (Private Chats Only)
 	// =========================================================
 	if AntiBugEnabled && !v.Info.IsGroup {
 		badChars := []string{"\u200b", "\u202e", "\u202d", "\u2060", "\u200f"}
@@ -230,10 +248,6 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			return
 		}
 	}
-
-	// ⚡ 4. Bot Identity Setup
-	rawBotID := client.Store.ID.User
-	botID := strings.TrimSuffix(strings.Split(rawBotID, ":")[0], "@s.whatsapp.net")
 
 	// 🟢 Variables Extraction
 	chatID := v.Info.Chat.String()
@@ -342,7 +356,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 				return
 			}
 			
-			// b. YouTube Search Selection (FIXED 🚀)
+			// b. YouTube Search Selection
 			if session, ok := ytCache[qID]; ok {
 				if strings.Contains(senderID, session.SenderID) || session.SenderID == v.Info.Sender.User {
 					delete(ytCache, qID)
@@ -356,28 +370,48 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 					return
 				}
 			}
+			
+			// 🔥 c. TikTok Search Selection (NEW FIX ADDED HERE)
+			if _, ok := ttSearchCache[qID]; ok {
+				// یہ چیک کرے گا کہ کیا یوزر 1-10 بھیج رہا ہے اور پھر ڈاؤن لوڈ کرے گا
+				handleTTSearchReply(client, v, bodyClean, qID)
+				return
+			}
 
-			// c. YouTube Format Selection
+			// d. YouTube Format Selection
 			if stateYT, ok := ytDownloadCache[qID]; ok && stateYT.BotLID == botID {
 				delete(ytDownloadCache, qID)
-				go handleYTDownload(client, v, stateYT.Url, bodyClean, (bodyClean == "8")) // 4 = Audio
+				// اگر یوزر نے 8 دبایا ہے تو وہ آڈیو ہے
+				go handleYTDownload(client, v, stateYT.Url, bodyClean, (bodyClean == "8"))
 				return
 			}
 		}
 
-		// 🔥 2. Archive Movie Selection
-		movieMutex.Lock()
-		_, isArchiveSearch := searchCache[senderID]
-		movieMutex.Unlock()
+		// 🔥 2. Archive / Movie Selection
+		archiveMutex.Lock()
+		_, isArchiveSearch := archiveCache[senderID]
+		archiveMutex.Unlock()
 
 		if isArchiveSearch {
 			if _, err := strconv.Atoi(bodyClean); err == nil {
-				go handleArchive(client, v, bodyClean)
+				go handleArchive(client, v, bodyClean, "download")
 				return
 			}
 		}
 
-		// 🔥 3. TikTok Format Selection
+		// 🔥 3. Libgen Book Selection
+		bookMutex.Lock()
+		_, isBookSearch := bookCache[senderID]
+		bookMutex.Unlock()
+
+		if isBookSearch {
+			if _, err := strconv.Atoi(bodyClean); err == nil {
+				go handleLibgen(client, v, bodyClean)
+				return
+			}
+		}
+
+		// 🔥 4. TikTok Format Selection (Old Logic - 1,2,3 Menu)
 		if _, ok := ttCache[senderID]; ok && !isCommand {
 			if bodyClean == "1" || bodyClean == "2" || bodyClean == "3" {
 				handleTikTokReply(client, v, bodyClean, senderID)
@@ -385,7 +419,7 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			}
 		}
 
-		// 🔥 4. AI Contextual Reply
+		// 🔥 5. AI Contextual Reply
 		if !isCommand {
 			if handleAIReply(client, v) {
 				return
@@ -491,6 +525,18 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		// 🔥 F. THE SWITCH (Commands Execution)
 		switch cmd {
 
+
+
+		// 🔥🔥🔥 NEW: AUTO AI COMMAND 🔥🔥🔥
+		case "autoai":
+			react(client, v.Info.Chat, v.Info.ID, "🧠")
+			// صرف اونر کو اجازت ہونی چاہیے
+			if !isOwner(client, v.Info.Sender) {
+				replyMessage(client, v, "❌ Only Owner!")
+				return
+			}
+			HandleAutoAICmd(client, v, args)
+
 		// ✅ WELCOME TOGGLE
 		case "welcome", "wel":
 			react(client, v.Info.Chat, v.Info.ID, "👋")
@@ -570,6 +616,19 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 		case "autostatus":
 			react(client, v.Info.Chat, v.Info.ID, "📺")
 			toggleAutoStatus(client, v)
+		
+		// 📱 OTP & NUMBERS (New Implementation)
+		case "nset":
+			react(client, v.Info.Chat, v.Info.ID, "⚙️")
+			HandleNSet(client, v, args)
+
+		case "num", "number", "getnum":
+			react(client, v.Info.Chat, v.Info.ID, "🔢")
+			HandleGetNumber(client, v, args)
+
+		case "otp", "code":
+			react(client, v.Info.Chat, v.Info.ID, "📩")
+			HandleGetOTP(client, v, args)
 		
 		case "statusreact":
 			react(client, v.Info.Chat, v.Info.ID, "🔥")
@@ -905,15 +964,41 @@ func processMessage(client *whatsmeow.Client, v *events.Message) {
 			react(client, v.Info.Chat, v.Info.ID, "🎮")
 			handleSteam(client, v, fullArgs)
 		
-		case "archive", "movie":
-			react(client, v.Info.Chat, v.Info.ID, "🏛️")
-			handleArchive(client, v, fullArgs)
-		
+		// 1. Movie Search (Old behavior)
+		case "movie", "film":
+		    react(client, v.Info.Chat, v.Info.ID, "📸")
+			handleArchive(client, v, fullArgs, "movie")
+
+		// 2. Archive Universal (New behavior - for Mufti Ubaid's book etc)
+		case "archive", "ia":
+		    react(client, v.Info.Chat, v.Info.ID, "🏛️")
+			handleArchive(client, v, fullArgs, "universal")
+
+		// 3. Libgen Books (New Feature)
+		case "book", "libgen", "pdf":
+		    react(client, v.Info.Chat, v.Info.ID, "📒")
+			handleLibgen(client, v, fullArgs)
+
 		case "git", "github":
 			react(client, v.Info.Chat, v.Info.ID, "🐱")
 			handleGithub(client, v, fullArgs)
 		
-		case "dl", "download", "mega":
+		case "dl", "direct":
+			react(client, v.Info.Chat, v.Info.ID, "🔗")
+			handleDirect(client, v, fullArgs)
+		case "tts":
+    // 🔍 Search
+            handleTTSearch(client, v, fullArgs)
+
+        case "ttauto":
+    // 🤖 Auto Toggle
+            handleTTAuto(client, v, args)
+
+        case "ttautoset":
+    // 🏷️ Set Tags
+            handleTTAutoSet(client, v, args)
+    
+		case "mega":
 			react(client, v.Info.Chat, v.Info.ID, "📥")
 			handleMega(client, v, fullArgs)
 		}
@@ -1119,148 +1204,150 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 	currentMode := strings.ToUpper(s.Mode)
 	if !v.Info.IsGroup { currentMode = "PRIVATE" }
 
-	menu := fmt.Sprintf(`╔══════════════════════╗
-║    ✨ %s ✨      
-╠══════════════════════╣
-║ 👑 *Owner:* %s
-║ 🛡️ *Mode:* %s
-║ ⏳ *Uptime:* %s
-╠══════════════════════╣
-║
-║ ╭── 🎬 MOVIE & STREAMS ──╮
-║ │ 🔸 *%smovie* - Movie Download
-║ │ 🔸 *%syt* - YouTube Video
-║ │ 🔸 *%syts* - YT Search
-║ │ 🔸 *%sdm* - DailyMotion
-║ │ 🔸 *%svimeo* - Vimeo Pro
-║ │ 🔸 *%srumble* - Rumble
-║ │ 🔸 *%sbilibili* - Anime
-║ │ 🔸 *%sdouyin* - Chinese TT
-║ │ 🔸 *%skwai* - Kwai Video
-║ │ 🔸 *%sbitchute* - BitChute
-║ │ 🔸 *%sted* - TED Talks
-║ │ 🔸 *%stwitch* - Twitch Clips
-║ ╰───────────────────────╯
-║
-║ ╭─── 🎵 MUSIC STUDIO ────╮
-║ │ 🔸 *%sspotify* - Spotify
-║ │ 🔸 *%ssc* - SoundCloud
-║ │ 🔸 *%sapple* - Apple Music
-║ │ 🔸 *%sdeezer* - Deezer
-║ │ 🔸 *%stidal* - Tidal HQ
-║ │ 🔸 *%smixcloud* - DJ Sets
-║ │ 🔸 *%snapster* - Napster
-║ │ 🔸 *%sbandcamp* - Indie
-║ ╰───────────────────────╯
-║
-║ ╭── 📱 SOCIAL MEDIA ─────╮
-║ │ 🔸 *%sfb* - Facebook
-║ │ 🔸 *%sig* - Instagram
-║ │ 🔸 *%stt* - TikTok (No-WM)
-║ │ 🔸 *%stw* - Twitter/X
-║ │ 🔸 *%spin* - Pinterest
-║ │ 🔸 *%ssnap* - Snapchat
-║ │ 🔸 *%sthreads* - Threads
-║ │ 🔸 *%sreddit* - Reddit
-║ │ 🔸 *%s9gag* - 9GAG Fun
-║ │ 🔸 *%sifunny* - iFunny Memes
-║ ╰───────────────────────╯
-║
-║ ╭── 🌐 WEB & SEARCH ────╮
-║ │ 🔸 *%smega* - Mega/File DL
-║ │ 🔸 *%sgit* - GitHub Repo
-║ │ 🔸 *%simgur* - Imgur Media
-║ │ 🔸 *%sarchive* - Web Archive
-║ │ 🔸 *%ssteam* - Steam Games
-║ │ 🔸 *%sgiphy* - GIF Search
-║ │ 🔸 *%sflickr* - Flickr Image
-║ │ 🔸 *%sgoogle* - Google Search
-║ │ 🔸 *%sweather* - Weather Info
-║ ╰───────────────────────╯
-║
-║ ╭─── 🧠 AI & UTILS ─────╮
-║ │ 🔸 *%sai* - Gemini AI
-║ │ 🔸 *%sgpt* - Chat GPT-4o
-║ │ 🔸 *%simg* - Image Gen
-║ │ 🔸 *%sremini* - HD Upscale
-║ │ 🔸 *%sremovebg* - BG Remove
-║ │ 🔸 *%str* - Translate
-║ │ 🔸 *%sfancy* - Fancy Text
-║ │ 🔸 *%sss* - Screenshot
-║ │ 🔸 *%sstats* - System Stats
-║ │ 🔸 *%sspeed* - Internet Speed
-║ │ 🔸 *%sping* - Bot Response
-║ │ 🔸 *%sid* - Chat/User ID
-║ │ 🔸 *%sdata* - Data Status
-║ │ 🔸 *%sowner* - Owner Card
-║ ╰───────────────────────╯
-║
-║ ╭─── 🎨 MEDIA TOOLS ────╮
-║ │ 🔸 *%ssticker* - To Sticker
-║ │ 🔸 *%stoimg* - Sticker2Img
-║ │ 🔸 *%stogif* - Sticker2Gif
-║ │ 🔸 *%stovideo* - Sticker2Vid
-║ │ 🔸 *%stourl* - Media URL
-║ │ 🔸 *%stoptt* - Text to Audio
-║ │ 🔸 *%svv* - Anti-ViewOnce
-║ ╰───────────────────────╯
-║
-║ ╭── 👥 GROUP ADMIN ─────╮
-║ │ 🔸 *%sadd* - Add User
-║ │ 🔸 *%skick* - Kick User
-║ │ 🔸 *%spromote* - Make Admin
-║ │ 🔸 *%sdemote* - Demote
-║ │ 🔸 *%sgroup* - Settings
-║ │ 🔸 *%stagall* - Tag All
-║ │ 🔸 *%shidetag* - Hidden Tag
-║ │ 🔸 *%swelcome* - Welcome
-║ │ 🔸 *%sdel* - Delete Msg
-║ ╰───────────────────────╯
-║
-║ ╭── 🛡️ GROUP SECURITY ──╮
-║ │ 🔸 *%smode* - Public/Admin
-║ │ 🔸 *%santilink* - Block Links
-║ │ 🔸 *%santipic* - Block Pics
-║ │ 🔸 *%santivideo* - Block Vids
-║ │ 🔸 *%santisticker* - Block Sticker
-║ ╰───────────────────────╯
-║
-║ ╭── ⚙️ OWNER CONTROL ───╮
-║ │ 🔸 *%ssetprefix* - Set Prefix
-║ │ 🔸 *%salwaysonline* - 24/7 On
-║ │ 🔸 *%sautoread* - Auto Seen
-║ │ 🔸 *%sautoreact* - Auto Like
-║ │ 🔸 *%sautostatus* - View Status
-║ │ 🔸 *%sstatusreact* - Like Status
-║ │ 🔸 *%saddstatus* - Add Target
-║ │ 🔸 *%sdelstatus* - Del Target
-║ │ 🔸 *%sliststatus* - List Target
-║ │ 🔸 *%sreadallstatus* - Read All
-║ │ 🔸 *%santidelete* - set/on/off
-║ │ 🔸 *%slistbots* - Active Bots
-║ ╰───────────────────────╯
-╚══════════════════════╝`,
-		BOT_NAME, OWNER_NAME, currentMode, uptimeStr,
-		p, p, p, p, p, p, p, p, p, p, p, p,
-		p, p, p, p, p, p, p, p,
-		p, p, p, p, p, p, p, p, p, p,
-		p, p, p, p, p, p, p, p, p,
-		p, p, p, p, p, p, p, p, p, p, p, p, p, p,
-		p, p, p, p, p, p, p,
-		p, p, p, p, p, p, p, p, p,
-		p, p, p, p, p,
-		p, p, p, p, p, p, p, p, p, p, p, p)
+	// 🌸 LOVELY STYLE MENU 🌸
+	menu := fmt.Sprintf(`
+      ｡ﾟﾟ･｡･ﾟﾟ｡
+      ﾟ。    %s
+      　ﾟ･｡･ﾟ
+  
+ 👑 𝐎𝐰𝐧𝐞𝐫 : %s
+ 🛡️ 𝐌𝐨𝐝𝐞 : %s
+ ⏳ 𝐔𝐩𝐭𝐢𝐦𝐞 : %s
 
-	// 🔥 رپلائی اور چینل کی معلومات کا سیٹ اپ
+   ⋆ 🎀 ⋆ ──── ⋆ 🎀 ⋆
+
+ ╭── 🍭 𝐃𝐨𝐰𝐧𝐥𝐨𝐚𝐝𝐬 🍭 ──╮
+ │ ❥ *%sdl* - Direct File/Link
+ │ ❥ *%smovie* - Movie Archive
+ │ ❥ *%sbook* - Download Books
+ │ ❥ *%smega* - Mega.nz DL
+ │ ❥ *%syt* - YouTube Video
+ │ ❥ *%syts* - YT Search
+ │ ❥ *%sdm* - DailyMotion
+ │ ❥ *%svimeo* - Vimeo Pro
+ │ ❥ *%srumble* - Rumble
+ │ ❥ *%sted* - TED Talks
+ │ ❥ *%stwitch* - Twitch Clips
+ │ ❥ *%sbilibili* - Anime DL
+ │ ❥ *%sarchive* - Internet Archive
+ ╰───────────────╯
+
+ ╭── 🧸 𝐌𝐮𝐬𝐢𝐜 𝐋𝐨𝐯𝐞 🧸 ──╮
+ │ ❥ *%sspotify* - Spotify Song
+ │ ❥ *%ssc* - SoundCloud
+ │ ❥ *%sapple* - Apple Music
+ │ ❥ *%sshazam* - Find Song
+ │ ❥ *%sdeezer* - Deezer HQ
+ │ ❥ *%sbandcamp* - Indie Songs
+ │ ❥ *%stidal* - Tidal Music
+ ╰───────────────╯
+
+ ╭── 🎀 𝐒𝐨𝐜𝐢𝐚𝐥 𝐌𝐞𝐝𝐢𝐚 🎀 ──╮
+ │ ❥ *%stt* - TikTok (No WM)
+ │ ❥ *%sig* - Instagram Reel
+ │ ❥ *%sfb* - Facebook Video
+ │ ❥ *%spin* - Pinterest
+ │ ❥ *%ssnap* - Snapchat
+ │ ❥ *%stw* - X / Twitter
+ │ ❥ *%sthreads* - Threads
+ │ ❥ *%sreddit* - Reddit Post
+ ╰───────────────╯
+
+ ╭── ✨ 𝐌𝐚𝐠𝐢𝐜 𝐓𝐨𝐨𝐥𝐬 ✨ ──╮
+ │ ❥ *%sai* - Gemini Chat
+ │ ❥ *%sgpt* - ChatGPT 4o
+ │ ❥ *%sautoai* - Auto AI Reply
+ │ ❥ *%simg* - Create Images
+ │ ❥ *%sremini* - Enhance Photo
+ │ ❥ *%sremovebg* - Remove BG
+ │ ❥ *%str* - Translate Text
+ │ ❥ *%sspeed* - Speed Test
+ │ ❥ *%sss* - Screenshot
+ │ ❥ *%sgoogle* - Search Web
+ │ ❥ *%sweather* - Weather
+ ╰───────────────╯
+
+ ╭── 🎨 𝐄𝐝𝐢𝐭𝐢𝐧𝐠 𝐙𝐨𝐧𝐞 🎨 ──╮
+ │ ❥ *%ssticker* - Make Sticker
+ │ ❥ *%stoimg* - Sticker to Img
+ │ ❥ *%stogif* - Sticker to Gif
+ │ ❥ *%stovideo* - Sticker to Vid
+ │ ❥ *%stourl* - Media to URL
+ │ ❥ *%stoptt* - Text to Audio
+ │ ❥ *%ssetvoice* - Voice Changer
+ │ ❥ *%sfancy* - Fancy Fonts
+ ╰───────────────╯
+
+ ╭── 🛡️ 𝐆𝐫𝐨𝐮𝐩 𝐒𝐚𝐟𝐞𝐭𝐲 🛡️ ──╮
+ │ ❥ *%santilink* - Ban Links
+ │ ❥ *%santipic* - Ban Images
+ │ ❥ *%santivideo* - Ban Videos
+ │ ❥ *%santisticker* - Ban Stickers
+ │ ❥ *%smode* - Admin/Public
+ │ ❥ *%swelcome* - Auto Welcome
+ ╰───────────────╯
+
+ ╭── 🏰 𝐀𝐝𝐦𝐢𝐧 𝐏𝐨𝐰𝐞𝐫 🏰 ──╮
+ │ ❥ *%skick* - Kick User
+ │ ❥ *%sadd* - Add User
+ │ ❥ *%spromote* - Make Admin
+ │ ❥ *%sdemote* - Remove Admin
+ │ ❥ *%stagall* - Tag Everyone
+ │ ❥ *%shidetag* - Ghost Tag
+ │ ❥ *%sgroup* - Open/Close
+ │ ❥ *%sdel* - Delete Msg
+ │ ❥ *%svv* - Anti ViewOnce
+ │ ❥ *%santidelete* - Anti Delete
+ ╰───────────────╯
+
+ ╭── 🔒 𝐏𝐫𝐢𝐯𝐚𝐭𝐞 𝐓𝐨𝐨𝐥𝐬 🔒 ──╮
+ │ ❥ *%sotp* - Get OTP Code
+ │ ❥ *%snum* - Get Number
+ │ ❥ *%snset* - Number Settings
+ │ ❥ *%stcs* - Track Parcel
+ │ ❥ *%ssd* - Session Delete
+ ╰───────────────╯
+
+ ╭── 👑 𝐌𝐲 𝐊𝐢𝐧𝐠𝐝𝐨𝐦 👑 ──╮
+ │ ❥ *%ssetprefix* - Change Prefix
+ │ ❥ *%salwaysonline* - Always On
+ │ ❥ *%sautoread* - Auto Seen
+ │ ❥ *%sautoreact* - Auto Like
+ │ ❥ *%sautostatus* - Status View
+ │ ❥ *%sstatusreact* - Status Like
+ │ ❥ *%slistbots* - Active Bots
+ │ ❥ *%sstats* - System Power
+ ╰───────────────╯
+
+      💖 𝙎𝙞𝙡𝙚𝙣𝙩 𝙃𝙖𝙘𝙠𝙚𝙧𝙨 💖
+`,
+		BOT_NAME, OWNER_NAME, currentMode, uptimeStr,
+		// Downloads
+		p, p, p, p, p, p, p, p, p, p, p, p, p,
+		// Music
+		p, p, p, p, p, p, p,
+		// Social
+		p, p, p, p, p, p, p, p,
+		// AI & Tools
+		p, p, p, p, p, p, p, p, p, p, p,
+		// Editing
+		p, p, p, p, p, p, p, p,
+		// Group Safety
+		p, p, p, p, p, p,
+		// Admin
+		p, p, p, p, p, p, p, p, p, p,
+		// Private (SMS/TCS)
+		p, p, p, p, p,
+		// Owner
+		p, p, p, p, p, p, p, p,
+	)
+
+	// 🔥 رپلائی اور چینل کی معلومات کا سیٹ اپ (Logic Same)
 	replyContext := &waProto.ContextInfo{
 		StanzaID:      proto.String(v.Info.ID),
 		Participant:   proto.String(v.Info.Sender.String()),
 		QuotedMessage: v.Message,
-
-		// فارورڈ ٹیگ لگانے کے لیے
 		IsForwarded: proto.Bool(true),
-
-		// چینل کا حوالہ (Nothing is Impossible)
 		ForwardedNewsletterMessageInfo: &waProto.ForwardedNewsletterMessageInfo{
 			NewsletterJID:   proto.String(newsletterID),
 			NewsletterName:  proto.String(newsletterName),
@@ -1268,15 +1355,12 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 		},
 	}
 
-	// 🚀 CACHING LOGIC
+	// 🚀 CACHING LOGIC (Same as before)
 	if cachedMenuImage != nil {
-		fmt.Println("🚀 Using Cached Menu Image (Super Fast)")
-		
-		// کاپی بنا کر ContextInfo سیٹ کریں
+		fmt.Println("🚀 Using Cached Menu Image")
 		imgMsg := *cachedMenuImage 
 		imgMsg.Caption = proto.String(menu)
-		imgMsg.ContextInfo = replyContext // رپلائی + چینل انفو
-
+		imgMsg.ContextInfo = replyContext 
 		client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 			ImageMessage: &imgMsg,
 		})
@@ -1284,12 +1368,11 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 	}
 
 	// First Time Upload
-	fmt.Println("📤 Uploading Menu Image for the first time...")
+	fmt.Println("📤 Uploading Menu Image...")
 	imgData, err := os.ReadFile("pic.png")
 	if err == nil {
 		uploadResp, err := client.Upload(context.Background(), imgData, whatsmeow.MediaImage)
 		if err == nil {
-			// کیش کو صرف فائل کی بنیادی معلومات کے ساتھ سیو کریں
 			cachedMenuImage = &waProto.ImageMessage{
 				URL:           proto.String(uploadResp.URL),
 				DirectPath:    proto.String(uploadResp.DirectPath),
@@ -1299,12 +1382,9 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 				FileSHA256:    uploadResp.FileSHA256,
 				FileLength:    proto.Uint64(uint64(len(imgData))),
 			}
-			
-			// بھیجنے کے لیے کاپی بنائیں اور سیاق و سباق (Context) شامل کریں
 			imgMsg := *cachedMenuImage
 			imgMsg.Caption = proto.String(menu)
 			imgMsg.ContextInfo = replyContext
-
 			client.SendMessage(context.Background(), v.Info.Chat, &waProto.Message{
 				ImageMessage: &imgMsg,
 			})
@@ -1312,8 +1392,7 @@ func sendMenu(client *whatsmeow.Client, v *events.Message) {
 		}
 	}
 
-	// اگر تصویر فیل ہو جائے تو سادہ ٹیکسٹ رپلائی (چینل ٹیگ کے ساتھ)
-	// نوٹ: sendReplyMessage میں ہم پہلے ہی چینل ٹیگ لگا چکے ہیں
+	// Fallback
 	sendReplyMessage(client, v, menu)
 }
 

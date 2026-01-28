@@ -565,12 +565,11 @@ type MediaItem struct {
 // 🔥 HELPER: Save Message to Mongo (Fixed Context)
 // 🔥 HELPER: Save Message to Mongo (DEBUG VERSION)
 func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, senderJID types.JID, msg *waProto.Message, isFromMe bool, ts uint64) {
-    // 🔥 FIX: Bot ID کو ہمیشہ صاف رکھیں (صرف نمبر)
-    botID := strings.Split(rawBotID, "@")[0]
-    botID = strings.Split(botID, ":")[0]
+	// 🔥 FIX 1: Bot ID Cleaning
+	botID := strings.Split(rawBotID, "@")[0]
+	botID = strings.Split(botID, ":")[0]
 
-    // ... باقی کوڈ وہی رہے گا ...
-	// 🛡️ Panic Recovery (Now prints error)
+	// 🛡️ Panic Recovery
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Printf("❌ [MONGO PANIC] Save failed: %v\n", r)
@@ -579,27 +578,72 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 
 	// 🔍 1. DB Connection Check
 	if chatHistoryCollection == nil {
-		fmt.Println("⚠️ [MONGO FAIL] Collection is nil! (DB Not Connected or Variable Wrong)")
+		// fmt.Println("⚠️ [MONGO FAIL] Collection is nil!")
 		return
 	}
 
-	// 🚫 2. Filter Check
+	// 🚫 2. Filter Check (Channels/Newsletters)
 	if strings.HasPrefix(chatID, "120") || strings.Contains(chatID, "@newsletter") {
-		// fmt.Println("ℹ️ [MONGO] Skipped Channel/Newsletter message")
 		return
 	}
 
-	chatID = canonicalChatID(chatID)
-	senderStr := senderJID.String()
+	// =========================================================
+	// 🧠 INTELLIGENT ID SWITCHER (PushName Based)
+	// =========================================================
+	
+	// 1. موجودہ آئی ڈی اور نام نکالیں
+	currentID := senderJID.ToNonAD().String()
+	senderName := ""
 
-	// 👤 Name Lookup
-	senderName := strings.Split(senderStr, "@")[0]
+	// نام نکالنے کی کوشش (پش نیم سب سے اہم ہے)
 	if contact, err := client.Store.Contacts.GetContact(context.Background(), senderJID); err == nil && contact.Found {
 		senderName = contact.FullName
-		if senderName == "" {
-			senderName = contact.PushName
+		if senderName == "" { senderName = contact.PushName }
+	}
+	// اگر سٹور میں نام نہیں ملا تو میسج والا پش نیم اٹھا لیں (اگر ہو)
+	// نوٹ: یہاں v.Info تک رسائی نہیں ہے، اس لیے ہم امید کرتے ہیں سٹور میں نام ہوگا۔ 
+	// اگر آپ context سے PushName پاس کر سکیں تو اور بھی بہتر ہوگا، لیکن فی الحال یہ کافی ہے۔
+
+	// 2. فیصلہ کریں کہ کون سی آئی ڈی استعمال کرنی ہے
+	finalSenderID := currentID
+
+	// اگر آنے والی آئی ڈی "LID" (عجیب سی سٹرنگ) ہے اور ہمارے پاس نام موجود ہے
+	if strings.Contains(currentID, "@lid") && senderName != "" {
+		
+		// 🕵️ ڈیٹا بیس سے پوچھیں: کیا اس "نام" کا کوئی "اصلی نمبر" موجود ہے؟
+		// ہم پچھلا کوئی بھی میسج ڈھونڈیں گے جس میں:
+		// 1. BotID سیم ہو
+		// 2. SenderName یہی ہو
+		// 3. اور Sender آئی ڈی میں '@s.whatsapp.net' (اصلی نمبر) ہو
+		
+		filter := bson.M{
+			"bot_id":      botID,
+			"sender_name": senderName,
+			"sender":      bson.M{"$regex": "@s\\.whatsapp\\.net"}, // صرف اصلی نمبر ڈھونڈو
+		}
+
+		var result ChatMessage
+		// سب سے تازہ ترین ریکارڈ اٹھائیں
+		opts := options.FindOne().SetSort(bson.D{{Key: "timestamp", Value: -1}})
+		
+		err := chatHistoryCollection.FindOne(context.Background(), filter, opts).Decode(&result)
+		if err == nil && result.Sender != "" {
+			// 🎉 مل گیا! LID کو ہٹا کر اصلی نمبر لگا دیں
+			// fmt.Printf("🔄 [SMART MERGE] Merging LID chat for '%s' -> %s\n", senderName, result.Sender)
+			finalSenderID = result.Sender
 		}
 	}
+
+	// 🔥 CHAT ID FIX:
+	// اگر یہ پرائیویٹ چیٹ ہے تو ChatID کو بھی اپ ڈیٹ ہونا چاہیے (کیونکہ پرائیویٹ میں ChatID = SenderID)
+	finalChatID := chatID
+	if !strings.Contains(chatID, "@g.us") {
+		finalChatID = finalSenderID
+	} else {
+		finalChatID = canonicalChatID(chatID)
+	}
+
+	// =========================================================
 
 	// 📝 Content Variables
 	var msgType, content string
@@ -607,7 +651,7 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 	var isSticker bool
 	
 	timestamp := time.Unix(int64(ts), 0)
-	isGroup := strings.Contains(chatID, "@g.us")
+	isGroup := strings.Contains(finalChatID, "@g.us")
 	isChannel := false
 
 	// 🔍 Extract Context Info
@@ -649,7 +693,7 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 		messageID = *contextInfo.StanzaID
 	}
 	if messageID == "" {
-		messageID = fmt.Sprintf("%s_%d", strings.Split(chatID, "@")[0], time.Now().UnixNano())
+		messageID = fmt.Sprintf("%s_%d", strings.Split(finalChatID, "@")[0], time.Now().UnixNano())
 	}
 
 	// 📂 Handle Media & Text
@@ -659,7 +703,7 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 	} else if msg.ImageMessage != nil {
 		msgType = "image"
 		content = "MEDIA_WAITING"
-		go saveMediaDoc(botID, chatID, messageID, "image", "image/jpeg", func() (string, error) {
+		go saveMediaDoc(botID, finalChatID, messageID, "image", "image/jpeg", func() (string, error) {
 			data, err := client.Download(context.Background(), msg.ImageMessage)
 			if err != nil { return "", err }
 			encoded := base64.StdEncoding.EncodeToString(data)
@@ -669,7 +713,7 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 		msgType = "image"
 		isSticker = true
 		content = "MEDIA_WAITING"
-		go saveMediaDoc(botID, chatID, messageID, "image", "image/webp", func() (string, error) {
+		go saveMediaDoc(botID, finalChatID, messageID, "image", "image/webp", func() (string, error) {
 			data, err := client.Download(context.Background(), msg.StickerMessage)
 			if err != nil { return "", err }
 			encoded := base64.StdEncoding.EncodeToString(data)
@@ -678,7 +722,7 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 	} else if msg.VideoMessage != nil {
 		msgType = "video"
 		content = "MEDIA_WAITING"
-		go saveMediaDoc(botID, chatID, messageID, "video", "video/mp4", func() (string, error) {
+		go saveMediaDoc(botID, finalChatID, messageID, "video", "video/mp4", func() (string, error) {
 			data, err := client.Download(context.Background(), msg.VideoMessage)
 			if err != nil { return "", err }
 			url, err := UploadToCatbox(data, "video.mp4")
@@ -688,10 +732,9 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 	} else if msg.AudioMessage != nil {
 		msgType = "audio"
 		content = "MEDIA_WAITING"
-		go saveMediaDoc(botID, chatID, messageID, "audio", "audio/ogg", func() (string, error) {
+		go saveMediaDoc(botID, finalChatID, messageID, "audio", "audio/ogg", func() (string, error) {
 			data, err := client.Download(context.Background(), msg.AudioMessage)
 			if err != nil { return "", err }
-			// 10MB limit for base64
 			if len(data) <= 10*1024*1024 {
 				encoded := base64.StdEncoding.EncodeToString(data)
 				return "data:audio/ogg;base64," + encoded, nil
@@ -703,7 +746,7 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 	} else if msg.DocumentMessage != nil {
 		msgType = "file"
 		content = "MEDIA_WAITING"
-		go saveMediaDoc(botID, chatID, messageID, "file", "application/octet-stream", func() (string, error) {
+		go saveMediaDoc(botID, finalChatID, messageID, "file", "application/octet-stream", func() (string, error) {
 			data, err := client.Download(context.Background(), msg.DocumentMessage)
 			if err != nil { return "", err }
 			fname := msg.DocumentMessage.GetFileName()
@@ -713,15 +756,14 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 			return url, nil
 		})
 	} else {
-		// Empty or unknown message type
 		return
 	}
 
-	// 💾 Create Document
+	// 💾 Create Document with INTELLIGENT ID
 	doc := ChatMessage{
 		BotID:        botID,
-		ChatID:       chatID,
-		Sender:       senderStr,
+		ChatID:       finalChatID,   // Updated (Real Number if found)
+		Sender:       finalSenderID, // Updated (Real Number if found)
 		SenderName:   senderName,
 		MessageID:    messageID,
 		Type:         msgType,
@@ -735,16 +777,19 @@ func saveMessageToMongo(client *whatsmeow.Client, rawBotID, chatID string, sende
 		QuotedSender: quotedSender,
 	}
 
-	// 🔥 ACTUAL INSERTION WITH LOGS
+	// 🔥 INSERT
 	_, err := chatHistoryCollection.InsertOne(context.Background(), doc)
 	if err != nil {
-		// E11000 means duplicate key error (message already saved)
 		if !strings.Contains(err.Error(), "E11000") {
 			fmt.Printf("❌ [MONGO ERROR] Failed to insert: %v\n", err)
 		}
 	} else {
-		// ✅ Success Log
-		fmt.Printf("📝 [MONGO SAVED] Chat: %s | Type: %s | Sender: %s\n", chatID, msgType, senderName)
+		// ✅ Log (Name + ID)
+		logID := finalSenderID
+		if strings.Contains(logID, "@s.whatsapp.net") {
+			logID = strings.Split(logID, "@")[0] // Just number for clean log
+		}
+		fmt.Printf("📝 [MONGO SAVED] Chat: %s | Type: %s | Name: %s\n", logID, msgType, senderName)
 	}
 }
 

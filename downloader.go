@@ -100,17 +100,38 @@ func downloadAndSend(client *whatsmeow.Client, v *events.Message, ytUrl, mode st
 		formatArg = "bestaudio" // آڈیو کے لیے الگ
 	}
 
+	// ==========================================================
+	// 🛡️ SECURITY UPDATE: Bypass YouTube 403 Forbidden
+	// ==========================================================
 	args := []string{
 		"--no-playlist", 
 		"-f", formatArg, 
 		"--merge-output-format", "mp4",
 		"--force-ipv4", 
+		
+		// 👇 یہ لائنز یوٹیوب کو دھوکہ دینے کے لیے ہیں کہ یہ موبائل ایپ ہے
+		"--extractor-args", "youtube:player_client=android",
+		"--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		
 		"-o", tempFileName, 
 		ytUrl,
 	}
 
 	if mode == "audio" {
-		args = []string{"--no-playlist", "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3", "-o", tempFileName, ytUrl}
+		args = []string{
+			"--no-playlist", 
+			"-f", "bestaudio", 
+			"--extract-audio", 
+			"--audio-format", "mp3", 
+			
+			// 👇 آڈیو کے لیے بھی وہی سیکیورٹی پیچ
+			"--force-ipv4",
+			"--extractor-args", "youtube:player_client=android",
+			"--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+			
+			"-o", tempFileName, 
+			ytUrl,
+		}
 	}
 
 	// 3️⃣ ڈاؤنلوڈ شروع
@@ -278,6 +299,7 @@ _(Default: WhatsApp)_`, cleanTitle, fileSizeMB)
 
 
 
+
 // 🔥 SMART SPLIT FUNCTION (Time-based calculation for playability)
 // یہ فنکشن فائل سائز کی بجائے ٹائم کیلکولیٹ کر کے کاٹے گا تاکہ ویڈیو پلے ہو سکے
 func splitVideoSmart(inputPath string, targetMB float64) ([]string, error) {
@@ -348,7 +370,7 @@ func uploadToWhatsApp(client *whatsmeow.Client, v *events.Message, res DLResult,
 	// 90MB سے بڑی فائل ہمیشہ ڈاکومنٹ بنے گی
 	forceDoc := res.Size > 90*1024*1024
 
-	if mode == "audio" || forceDoc {
+	if mode == "audio" || mode == "document" || forceDoc {
 		mType = whatsmeow.MediaDocument
 	} else {
 		mType = whatsmeow.MediaVideo
@@ -904,4 +926,108 @@ func sendDocument(client *whatsmeow.Client, v *events.Message, docURL, name, mim
 			Mimetype: proto.String(mime), FileName: proto.String(name), FileLength: proto.Uint64(uint64(len(data))),
 		},
 	})
+}
+
+func handleDirect(client *whatsmeow.Client, v *events.Message, link string) {
+	if link == "" {
+		replyMessage(client, v, "❌ *Error:* Link missing.")
+		return
+	}
+
+	// 1. کارڈ بھیجیں
+	sendPremiumCard(client, v, "Universal Downloader", "Powered by Python", "🚀 Bypassing Security & Downloading...")
+
+	// 2. Python Script چلائیں
+	// یہ بالکل yt-dlp والی ٹیکنیک ہے
+	cmd := exec.Command("python3", "browser_dl.py", link)
+	
+	// آؤٹ پٹ پکڑیں
+	output, err := cmd.CombinedOutput()
+	result := strings.TrimSpace(string(output))
+
+	// 3. ایرر چیک کریں
+	if err != nil {
+		// اگر پائتھون فیل ہوا تو لاگز پرنٹ کریں
+		fmt.Println("❌ Python Error Logs:", result)
+		replyMessage(client, v, "❌ Failed to download file via engine.")
+		return
+	}
+
+	// Python سکرپٹ آخری لائن میں فائل کا پاتھ دیتا ہے
+	lines := strings.Split(result, "\n")
+	filePath := strings.TrimSpace(lines[len(lines)-1])
+
+	// 4. چیک کریں فائل موجود ہے؟
+	info, err := os.Stat(filePath)
+	if os.IsNotExist(err) {
+		replyMessage(client, v, "❌ Error: Python finished but file not found.")
+		return
+	}
+
+	fmt.Println("✅ File Downloaded:", filePath)
+
+	// 5. واٹس ایپ پر بھیجیں
+	uploadToWhatsApp(client, v, DLResult{
+		Path:  filePath,
+		Title: info.Name(),
+		Size:  info.Size(),
+		Mime:  "application/vnd.android.package-archive", // APK کے لیے
+	}, "document")
+
+	// 6. صفائی
+	os.Remove(filePath)
+}
+
+
+// 📚 SCRIBD HANDLER (Using scribd-dl Python Tool)
+func handleScribd(client *whatsmeow.Client, v *events.Message, link string) {
+	if link == "" {
+		replyMessage(client, v, "❌ Link Missing!")
+		return
+	}
+
+	// 1️⃣ کارڈ بھیجیں
+	sendPremiumCard(client, v, "Scribd Doc", "Scribd", "📑 Extracting Pages & Converting to PDF...")
+
+	// 2️⃣ فائل کا نام سیٹ کریں
+	// ٹائم سٹیمپ کے ساتھ فولڈر بنائیں تاکہ مکس نہ ہو
+	outputDir := fmt.Sprintf("temp_scribd_%d", time.Now().Unix())
+	
+	// کمانڈ چلائیں: scribd-dl URL
+	// --pages 1-100 (آپ لمٹ لگا سکتے ہیں ورنہ بہت ٹائم لگے گا)
+	cmd := exec.Command("scribd-dl", link, "--output", outputDir)
+	
+	// لوگو چیک کرنے کے لیے
+	fmt.Println("📚 [SCRIBD] Starting download for:", link)
+	
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println("❌ Scribd Error:", err)
+		replyMessage(client, v, "❌ Failed to download from Scribd. (Content might be Premium-only)")
+		return
+	}
+
+	// 3️⃣ ڈاؤن لوڈ شدہ فائل ڈھونڈیں
+	// scribd-dl فولڈر کے اندر .pdf فائل بناتا ہے
+	files, _ := filepath.Glob(filepath.Join(outputDir, "*.pdf"))
+	if len(files) == 0 {
+		replyMessage(client, v, "❌ Error: PDF conversion failed.")
+		os.RemoveAll(outputDir)
+		return
+	}
+	
+	finalPath := files[0]
+	info, _ := os.Stat(finalPath)
+	filename := filepath.Base(finalPath)
+
+	// 4️⃣ واٹس ایپ پر بھیجیں
+	uploadToWhatsApp(client, v, DLResult{
+		Path:  finalPath,
+		Title: filename,
+		Size:  info.Size(),
+		Mime:  "application/pdf",
+	}, "document")
+
+	// 5️⃣ صفائی (پورا فولڈر اڑا دیں)
+	os.RemoveAll(outputDir)
 }
