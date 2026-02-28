@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════
 # 1. Stage: Go Builder
 # ═══════════════════════════════════════════════════════════
-FROM golang:1.24-bookworm AS go-builder
+FROM golang:1.25-bookworm AS go-builder
 
 RUN apt-get update && apt-get install -y \
     gcc libc6-dev git libsqlite3-dev ffmpeg \
